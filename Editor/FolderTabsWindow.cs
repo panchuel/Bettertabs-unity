@@ -550,15 +550,19 @@ namespace FolderTabs
         void DrawGridView(Rect listRect, string rootPath)
         {
             var guids = AssetDatabase.FindAssets("", new string[] { rootPath });
-            var assets = new List<string>();
+            var folders = new List<string>();
+            var files   = new List<string>();
             foreach (var guid in guids)
             {
                 var assetPath = AssetDatabase.GUIDToAssetPath(guid);
                 var parent = Path.GetDirectoryName(assetPath)?.Replace('\\', '/');
                 if (parent != rootPath) continue;
-                if (!AssetDatabase.IsValidFolder(assetPath))
-                    assets.Add(assetPath);
+                if (AssetDatabase.IsValidFolder(assetPath)) folders.Add(assetPath);
+                else                                        files.Add(assetPath);
             }
+            var assets = new List<string>(folders.Count + files.Count);
+            assets.AddRange(folders);
+            assets.AddRange(files);
 
             int cols = Mathf.Max(1, (int)(listRect.width / GridCellSize));
             int rows = Mathf.CeilToInt((float)assets.Count / cols);
@@ -579,9 +583,16 @@ namespace FolderTabs
 
         void DrawGridCell(Rect cellRect, string path)
         {
-            var preview = AssetPreview.GetAssetPreview(AssetDatabase.LoadAssetAtPath<Object>(path));
-            if (preview == null)
-                preview = AssetDatabase.GetCachedIcon(path) as Texture2D;
+            bool isFolder = AssetDatabase.IsValidFolder(path);
+
+            Texture2D icon;
+            if (isFolder)
+                icon = EditorGUIUtility.FindTexture("Folder Icon");
+            else
+            {
+                icon = AssetPreview.GetAssetPreview(AssetDatabase.LoadAssetAtPath<Object>(path));
+                if (icon == null) icon = AssetDatabase.GetCachedIcon(path) as Texture2D;
+            }
 
             var ev = Event.current;
 
@@ -593,12 +604,19 @@ namespace FolderTabs
             {
                 if (ev.button == 0)
                 {
-                    if (ev.clickCount == 2) { FolderTabsInteractionHandler.OpenAsset(path); ev.Use(); }
+                    if (ev.clickCount == 2)
+                    {
+                        if (isFolder) AddOrSelectTab(path);
+                        else FolderTabsInteractionHandler.OpenAsset(path);
+                        ev.Use();
+                    }
                     else { OnAssetSelected(path); ev.Use(); }
                 }
                 else if (ev.button == 1)
                 {
-                    var menu = FolderTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
+                    var menu = isFolder
+                        ? FolderTabsInteractionHandler.BuildFolderContextMenu(path, StartRename, OnAssetModified, RequestRefresh)
+                        : FolderTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
                     menu.ShowAsContext();
                     ev.Use();
                 }
@@ -607,8 +625,8 @@ namespace FolderTabs
             { OnAssetDragged(path); ev.Use(); }
 
             var iconRect = new Rect(cellRect.x + (GridCellSize - GridIconSize) / 2, cellRect.y + 4, GridIconSize, GridIconSize);
-            if (preview != null)
-                GUI.DrawTexture(iconRect, preview, ScaleMode.ScaleToFit);
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit);
 
             var labelRect = new Rect(cellRect.x + 2, cellRect.y + GridCellSize - 18, GridCellSize - 4, 16);
             var labelStyle = new GUIStyle(EditorStyles.miniLabel)
@@ -617,7 +635,7 @@ namespace FolderTabs
                 clipping = TextClipping.Clip,
                 normal = { textColor = isSelected ? Color.white : EditorStyles.miniLabel.normal.textColor }
             };
-            GUI.Label(labelRect, Path.GetFileNameWithoutExtension(path), labelStyle);
+            GUI.Label(labelRect, Path.GetFileName(path), labelStyle);
         }
 
         // ── Folder drag-drop handling ─────────────────────────────────────────
