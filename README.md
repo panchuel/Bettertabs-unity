@@ -4,7 +4,6 @@ A dockable **Project panel replacement** for Unity that lets you pin folders as
 tabs and work without constantly navigating the full asset tree.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
-![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 
 ---
@@ -79,8 +78,3 @@ and double-click to import.
 - Unity **2021.3 or later**
 - No third-party dependencies
 
----
-
-## License
-
-MIT — free to use in personal and commercial projects.
