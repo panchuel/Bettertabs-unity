@@ -27,7 +27,7 @@ you already know from the native Project panel.
 2. Click **`+`** → **Add package from git URL**
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.2
+   https://github.com/panchuel/foldertabs-unity.git
    ```
 
 ### Via .unitypackage
