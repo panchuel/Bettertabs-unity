@@ -28,6 +28,9 @@ namespace FolderTabs
         float _dragTabOffsetX;
         float _dragTabCurrentX;
 
+        // ── Closed-tab history (Ctrl+Shift+T) ────────────────────────────────
+        readonly Stack<string> _closedTabStack = new Stack<string>();
+
         // ── Tree & search ─────────────────────────────────────────────────────
         FolderTreeRenderer _tree;
         FolderSearchHandler _search;
@@ -69,12 +72,22 @@ namespace FolderTabs
             return false;
         }
 
-        // ── Menu item ────────────────────────────────────────────────────────
+        // ── Menu items ───────────────────────────────────────────────────────
         [MenuItem("Window/Folder Tabs")]
         public static void Open()
         {
             var w = GetWindow<FolderTabsWindow>();
             w.Show();
+        }
+
+        // Ctrl+T works globally regardless of which window has focus.
+        [MenuItem("Window/Folder Tabs/Add Tab from Selection %t")]
+        static void AddTabFromSelectionMenu()
+        {
+            var w = GetWindow<FolderTabsWindow>();
+            w.Show();
+            w.Focus();
+            w.OpenNewTab();
         }
 
         // ── Lifecycle ────────────────────────────────────────────────────────
@@ -126,6 +139,7 @@ namespace FolderTabs
                 _pressedTabIndex = -1;
             }
 
+            HandleKeyboardShortcuts();
             HandleDragEvents();
 
             if (_tabs.Count == 0)
@@ -135,7 +149,7 @@ namespace FolderTabs
             }
 
             DrawTabBar();
-            DrawSearchToolbar();
+            if (ActiveTabIsFolder()) DrawSearchToolbar();
             DrawContent();
 
             if (_isDragHovering)
@@ -161,7 +175,7 @@ namespace FolderTabs
                 fontSize = 14,
                 normal = { textColor = _isDragHovering ? new Color(0.5f, 0.8f, 1f) : Color.gray }
             };
-            GUI.Label(r, "⊕ Drag a folder here", style);
+            GUI.Label(r, "⊕ Drag a folder or asset here", style);
         }
 
         // ── Tab bar ──────────────────────────────────────────────────────────
@@ -226,13 +240,12 @@ namespace FolderTabs
                 if (acted) ev.Use();
             }
 
-            var folderIcon = EditorGUIUtility.FindTexture("Folder Icon");
-
             for (int i = 0; i < count; i++)
             {
                 if (i == _dragTabIndex) continue;
 
-                DrawTabAt(i, starts[i], widths[i], folderIcon, active: i == _selectedIndex, ghost: false);
+                var tabIcon = GetTabIcon(_tabs[i].path);
+                DrawTabAt(i, starts[i], widths[i], tabIcon, active: i == _selectedIndex, ghost: false);
 
                 if (ev.type == EventType.ContextClick
                     && new Rect(starts[i], 0, widths[i], TabHeight).Contains(ev.mousePosition))
@@ -254,7 +267,7 @@ namespace FolderTabs
             if (_dragTabIndex >= 0 && _dragTabIndex < count)
             {
                 DrawTabAt(_dragTabIndex, _dragTabCurrentX, widths[_dragTabIndex],
-                    folderIcon, active: _dragTabIndex == _selectedIndex, ghost: true);
+                    GetTabIcon(_tabs[_dragTabIndex].path), active: _dragTabIndex == _selectedIndex, ghost: true);
             }
 
             GUI.EndScrollView();
@@ -271,7 +284,7 @@ namespace FolderTabs
         void ShowCreateMenu()
         {
             string root = ActiveTabPath();
-            if (string.IsNullOrEmpty(root)) return;
+            if (string.IsNullOrEmpty(root) || !ActiveTabIsFolder()) return;
 
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent("Folder"), false, () =>
@@ -423,16 +436,24 @@ namespace FolderTabs
         // ── Content area ──────────────────────────────────────────────────────
         void DrawContent()
         {
-            float topOffset = TabHeight * 2;
-            var listRect = new Rect(0, topOffset, position.width, position.height - topOffset);
-
             if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count)
             {
-                GUI.Label(listRect, "No folder selected.", EditorStyles.centeredGreyMiniLabel);
+                var emptyRect = new Rect(0, TabHeight, position.width, position.height - TabHeight);
+                GUI.Label(emptyRect, "No tab selected.", EditorStyles.centeredGreyMiniLabel);
                 return;
             }
 
             string rootPath = ActiveTabPath();
+
+            if (!ActiveTabIsFolder())
+            {
+                var pinRect = new Rect(0, TabHeight, position.width, position.height - TabHeight);
+                DrawAssetPinView(pinRect, rootPath);
+                return;
+            }
+
+            float topOffset = TabHeight * 2;
+            var listRect = new Rect(0, topOffset, position.width, position.height - topOffset);
 
             if (_search.IsSearching)
             {
@@ -444,6 +465,49 @@ namespace FolderTabs
                 DrawGridView(listRect, rootPath);
             else
                 DrawTreeView(listRect, rootPath);
+        }
+
+        // ── Asset pin view ────────────────────────────────────────────────────
+        void DrawAssetPinView(Rect r, string path)
+        {
+            var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
+
+            var preview = obj != null ? AssetPreview.GetAssetPreview(obj) : null;
+            if (preview == null) preview = AssetDatabase.GetCachedIcon(path) as Texture2D;
+
+            float previewSize = Mathf.Min(r.width * 0.4f, r.height * 0.4f, 128f);
+            float cx = r.x + r.width * 0.5f;
+            float cy = r.y + r.height * 0.5f - 24f;
+
+            if (preview != null)
+                GUI.DrawTexture(
+                    new Rect(cx - previewSize * 0.5f, cy - previewSize * 0.5f, previewSize, previewSize),
+                    preview, ScaleMode.ScaleToFit);
+
+            var nameStyle = new GUIStyle(EditorStyles.boldLabel) { alignment = TextAnchor.MiddleCenter };
+            GUI.Label(new Rect(r.x, cy + previewSize * 0.5f + 6f, r.width, 20f),
+                Path.GetFileNameWithoutExtension(path), nameStyle);
+
+            var typeStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color(0.55f, 0.55f, 0.55f) }
+            };
+            GUI.Label(new Rect(r.x, cy + previewSize * 0.5f + 26f, r.width, 16f),
+                AssetDatabase.GetMainAssetTypeAtPath(path)?.Name ?? "", typeStyle);
+
+            float btnY = cy + previewSize * 0.5f + 50f;
+            float btnW = 120f;
+            float btnX = cx - btnW * 1.5f - 4f;
+
+            if (GUI.Button(new Rect(btnX, btnY, btnW, 22f), "Open"))
+                FolderTabsInteractionHandler.OpenAsset(path);
+
+            if (GUI.Button(new Rect(btnX + btnW + 4f, btnY, btnW, 22f), "Show in Project"))
+                FolderTabsInteractionHandler.ShowInProject(path);
+
+            if (GUI.Button(new Rect(btnX + (btnW + 4f) * 2f, btnY, btnW, 22f), "Reveal in Explorer"))
+                FolderTabsInteractionHandler.RevealInExplorer(path);
         }
 
         // ── Tree view ─────────────────────────────────────────────────────────
@@ -646,7 +710,7 @@ namespace FolderTabs
 
             if (ev.type == EventType.DragUpdated && windowRect.Contains(ev.mousePosition))
             {
-                if (IsDraggingFolder())
+                if (IsDraggingAsset())
                 {
                     DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
                     _isDragHovering = true;
@@ -656,11 +720,11 @@ namespace FolderTabs
             }
             else if (ev.type == EventType.DragPerform && windowRect.Contains(ev.mousePosition))
             {
-                if (IsDraggingFolder())
+                if (IsDraggingAsset())
                 {
                     DragAndDrop.AcceptDrag();
                     foreach (var path in DragAndDrop.paths)
-                        if (AssetDatabase.IsValidFolder(path))
+                        if (!string.IsNullOrEmpty(path))
                             AddOrSelectTab(path);
                     _isDragHovering = false;
                     ev.Use();
@@ -674,12 +738,9 @@ namespace FolderTabs
             }
         }
 
-        bool IsDraggingFolder()
+        bool IsDraggingAsset()
         {
-            foreach (var path in DragAndDrop.paths)
-                if (AssetDatabase.IsValidFolder(path))
-                    return true;
-            return false;
+            return DragAndDrop.paths != null && DragAndDrop.paths.Length > 0;
         }
 
         void DrawDropOverlay()
@@ -762,6 +823,90 @@ namespace FolderTabs
             Repaint();
         }
 
+        // ── Keyboard shortcuts & scroll navigation ────────────────────────────
+        void HandleKeyboardShortcuts()
+        {
+            var ev = Event.current;
+
+            // Shift+Scroll → cycle tabs   |   Ctrl+Shift+Scroll → move tab
+            if (ev.type == EventType.ScrollWheel && ev.shift && _tabs.Count > 1)
+            {
+                int dir = ev.delta.y > 0 ? 1 : -1;
+                if (ev.control || ev.command)
+                {
+                    MoveTab(_selectedIndex, dir);
+                }
+                else
+                {
+                    int next = (_selectedIndex + dir + _tabs.Count) % _tabs.Count;
+                    if (next != _selectedIndex) SelectTab(next);
+                }
+                ev.Use();
+                return;
+            }
+
+            if (ev.type != EventType.KeyDown) return;
+            bool ctrl = ev.control || ev.command;
+
+            // Ctrl+W → close active tab
+            if (ctrl && !ev.shift && ev.keyCode == KeyCode.W && _selectedIndex >= 0)
+            {
+                RemoveTab(_selectedIndex);
+                ev.Use();
+                return;
+            }
+
+            // Ctrl+Shift+T → reopen last closed tab
+            if (ctrl && ev.shift && ev.keyCode == KeyCode.T)
+            {
+                ReopenClosedTab();
+                ev.Use();
+            }
+        }
+
+        void OpenNewTab()
+        {
+            // Use the active Project selection if it has an asset path.
+            if (Selection.activeObject != null)
+            {
+                string selPath = AssetDatabase.GetAssetPath(Selection.activeObject);
+                if (!string.IsNullOrEmpty(selPath))
+                {
+                    AddOrSelectTab(selPath);
+                    return;
+                }
+            }
+            // Fallback: OS folder picker.
+            string folder = EditorUtility.OpenFolderPanel("Add Folder Tab", "Assets", "");
+            if (string.IsNullOrEmpty(folder)) return;
+            if (folder.StartsWith(Application.dataPath))
+                folder = "Assets" + folder.Substring(Application.dataPath.Length);
+            if (!string.IsNullOrEmpty(folder))
+                AddOrSelectTab(folder);
+        }
+
+        void ReopenClosedTab()
+        {
+            while (_closedTabStack.Count > 0)
+            {
+                string path = _closedTabStack.Pop();
+                // Skip if already open.
+                bool alreadyOpen = false;
+                foreach (var t in _tabs) if (t.path == path) { alreadyOpen = true; break; }
+                if (!alreadyOpen) { AddOrSelectTab(path); return; }
+            }
+        }
+
+        void MoveTab(int index, int direction)
+        {
+            if (index < 0 || index >= _tabs.Count || _tabs.Count <= 1) return;
+            // Wrap-around so both scroll directions always produce movement.
+            int target = (index + direction + _tabs.Count) % _tabs.Count;
+            SwapTabs(index, target);
+            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            Repaint();
+        }
+
         // ── Tab management ────────────────────────────────────────────────────
         void AddOrSelectTab(string path)
         {
@@ -783,6 +928,14 @@ namespace FolderTabs
             _renameBuffer = null;
             _assetScroll = Vector2.zero;
             _tree.InvalidateCache();
+
+            var tab = _tabs[index];
+            if (!AssetDatabase.IsValidFolder(tab.path))
+            {
+                var obj = AssetDatabase.LoadAssetAtPath<Object>(tab.path);
+                if (obj != null) Selection.activeObject = obj;
+            }
+
             RestoreActiveTabState();
             Repaint();
             FolderTabsPrefs.Save(_tabs, _selectedIndex);
@@ -790,6 +943,7 @@ namespace FolderTabs
 
         void RemoveTab(int index)
         {
+            _closedTabStack.Push(_tabs[index].path);
             _tabs.RemoveAt(index);
             if (_tabs.Count == 0)
             {
@@ -882,6 +1036,21 @@ namespace FolderTabs
             _selectedIndex >= 0 && _selectedIndex < _tabs.Count
                 ? _tabs[_selectedIndex].path
                 : null;
+
+        bool ActiveTabIsFolder()
+        {
+            var p = ActiveTabPath();
+            return p != null && AssetDatabase.IsValidFolder(p);
+        }
+
+        static Texture2D GetTabIcon(string path)
+        {
+            if (AssetDatabase.IsValidFolder(path))
+                return EditorGUIUtility.FindTexture("Folder Icon");
+            var icon = AssetDatabase.GetCachedIcon(path) as Texture2D;
+            if (icon != null) return icon;
+            return EditorGUIUtility.FindTexture("DefaultAsset Icon");
+        }
 
         static Texture2D LoadWindowIcon()
         {

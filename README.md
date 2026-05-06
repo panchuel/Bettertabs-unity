@@ -4,7 +4,7 @@ A dockable **Project panel replacement** for Unity that lets you pin folders as
 tabs and work without constantly navigating the full asset tree.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.2-blue)
 
 ---
 
@@ -27,12 +27,12 @@ you already know from the native Project panel.
 2. Click **`+`** → **Add package from git URL**
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.1
+   https://github.com/panchuel/foldertabs-unity.git#v1.0.2
    ```
 
 ### Via .unitypackage
 
-Download `FolderTabs-v1.0.0.unitypackage` from the
+Download `FolderTabs-v1.0.2.unitypackage` from the
 [latest release](https://github.com/panchuel/foldertabs-unity/releases)
 and double-click to import.
 
@@ -50,7 +50,7 @@ and double-click to import.
 
 | | |
 |---|---|
-| 📌 **Pinned tabs** | Drag folders in, reorder by dragging, close with `×` |
+| 📌 **Pinned tabs** | Drag folders or assets in, reorder by dragging, close with `×` |
 | 🌲 **Tree view** | Expandable folders with child count, icons, and type labels |
 | ⊞ **Grid view** | Asset previews at 64×64, toggle in the toolbar |
 | 🔍 **Scoped search** | Search is contained to the active tab's folder |
@@ -60,15 +60,34 @@ and double-click to import.
 | 🔗 **Inspector sync** | Clicking an asset shows it in the Inspector automatically |
 | ↕️ **Drag and drop** | Drag out to any Unity panel · Drop in to Move or Copy |
 | 🔄 **Auto-refresh** | Detects file system changes without manual refresh |
+| ⌨️ **Browser shortcuts** | Ctrl+T / Ctrl+W / Ctrl+Shift+T + scroll navigation |
 
 ---
 
 ## Keyboard Shortcuts
 
-| Key | Action |
+### Tab management
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+T` | Add tab from current Project selection (works globally) |
+| `Ctrl+W` | Close the active tab |
+| `Ctrl+Shift+T` | Reopen the last closed tab |
+
+### Navigation
+
+| Shortcut | Action |
+|---|---|
+| `Shift + Scroll` | Cycle through tabs |
+| `Ctrl+Shift + Scroll` | Move the active tab left / right |
+
+### Asset interaction
+
+| Shortcut | Action |
 |---|---|
 | `Enter` | Open selected asset |
 | `F2` | Rename selected asset |
+| `Delete` | Delete selected asset |
 | `Escape` | Cancel rename |
 
 ---
@@ -77,4 +96,3 @@ and double-click to import.
 
 - Unity **2021.3 or later**
 - No third-party dependencies
-
