@@ -31,8 +31,10 @@ Folder Tabs keeps those folders one click away, with the same interactions you a
 | **Inspector sync** | Clicking an asset shows it in the Inspector automatically |
 | **Drag and drop** | Drag out to any Unity panel · Drop in to Move or Copy |
 | **Auto-refresh** | Detects file system changes without manual refresh |
+| **Tab overflow** | `‹` `›` arrows appear when tabs exceed the bar width, with smooth scroll animation |
 | **Browser shortcuts** | Ctrl+T / Ctrl+W / Ctrl+Shift+T + scroll navigation |
 | **Session persistence** | Tabs, expanded paths, and search query survive editor restarts |
+| **Settings** | Invert scroll direction — **Window › Folder Tabs › Settings** |
 
 ---
 
@@ -57,7 +59,7 @@ No additional setup is required. The tool is ready to use after import.
 
 ## Quick Start
 
-1. Open the window: **Window › Folder Tabs**.
+1. Open the window: **Window › Folder Tabs › Open Folder Tabs**.
 2. Dock it anywhere — next to the Project panel, the Inspector, or as a floating window.
 3. Drag any folder from the native Project panel into the Folder Tabs window.
 4. The folder opens as a tab. Drag more folders to add more tabs.
@@ -149,7 +151,7 @@ This is an **Editor-only** tool. It has no effect on builds and adds no runtime 
 ## Known Limitations
 
 - **Tab state is stored in EditorPrefs.** If EditorPrefs are cleared, all tabs will be lost. This does not affect project assets.
-- **Ctrl+T may conflict** with other editor tools that register the same global shortcut. If it does not respond, check for conflicts in other installed packages.
+- **Ctrl+T uses Unity's ShortcutManager.** If it conflicts with another package, remap it via **Edit › Shortcuts… › Folder Tabs / Add Tab from Selection**.
 - **Linux support is untested.** The tool should work but has not been verified on Linux editors.
 
 ---
@@ -169,7 +171,7 @@ Click the **Refresh** button in the toolbar, or right-click anywhere in the pane
 Make sure you are dragging from the **native Unity Project panel** (not from the OS file explorer). Dragging from the OS file manager into the window is not supported.
 
 **The window appears empty after docking.**  
-Resize the window slightly to trigger a repaint, or close and reopen it via **Window › Folder Tabs**.
+Resize the window slightly to trigger a repaint, or close and reopen it via **Window › Folder Tabs › Open Folder Tabs**.
 
 ---
 

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.ShortcutManagement;
 using UnityEngine;
 
 namespace FolderTabs
@@ -18,6 +19,9 @@ namespace FolderTabs
         // ── Scroll positions ─────────────────────────────────────────────────
         Vector2 _tabScroll;
         Vector2 _assetScroll;
+        bool _scrollToSelected;
+        float _tabScrollTarget;
+        double _tabScrollTime;
 
         // ── Folder drag-drop state ───────────────────────────────────────────
         bool _isDragHovering;
@@ -73,16 +77,17 @@ namespace FolderTabs
         }
 
         // ── Menu items ───────────────────────────────────────────────────────
-        [MenuItem("Window/Folder Tabs")]
+        [MenuItem("Window/Folder Tabs/Open Folder Tabs")]
         public static void Open()
         {
             var w = GetWindow<FolderTabsWindow>();
             w.Show();
         }
 
-        // Ctrl+T works globally regardless of which window has focus.
-        [MenuItem("Window/Folder Tabs/Add Tab from Selection %t")]
-        static void AddTabFromSelectionMenu()
+        // Ctrl+T global shortcut — registered via ShortcutManager, not MenuItem,
+        // so it does not appear as a visible menu entry.
+        [Shortcut("Folder Tabs/Add Tab from Selection", KeyCode.T, ShortcutModifiers.Action)]
+        static void AddTabFromSelectionShortcut()
         {
             var w = GetWindow<FolderTabsWindow>();
             w.Show();
@@ -181,9 +186,9 @@ namespace FolderTabs
         // ── Tab bar ──────────────────────────────────────────────────────────
         void DrawTabBar()
         {
-            // Reserve right side for + button (24px) and view toggle (26px)
-            float rightReserved = 52f;
-            var barRect = new Rect(0, 0, position.width - rightReserved, TabHeight);
+            const float rightReserved = 52f;
+            const float arrowW = 16f;
+            float fullBarWidth = position.width - rightReserved;
             GUI.Box(new Rect(0, 0, position.width, TabHeight), GUIContent.none, EditorStyles.toolbar);
 
             int count = _tabs.Count;
@@ -196,6 +201,40 @@ namespace FolderTabs
                 widths[i] = Mathf.Clamp(lw + 40, 80, 180);
                 starts[i] = total;
                 total += widths[i];
+            }
+
+            bool hasOverflow = total > fullBarWidth;
+            float scrollOffsetX = hasOverflow ? arrowW : 0f;
+            float barWidth = fullBarWidth - (hasOverflow ? arrowW * 2f : 0f);
+            var barRect = new Rect(scrollOffsetX, 0, barWidth, TabHeight);
+
+            // Auto-scroll to keep selected tab in view
+            if (_scrollToSelected && _selectedIndex >= 0 && _selectedIndex < count)
+            {
+                _scrollToSelected = false;
+                float tabStart = starts[_selectedIndex];
+                float tabEnd   = tabStart + widths[_selectedIndex];
+                float target   = _tabScrollTarget;
+                if (tabStart < target)
+                    target = tabStart;
+                else if (tabEnd > target + barWidth)
+                    target = tabEnd - barWidth;
+                _tabScrollTarget = Mathf.Clamp(target, 0f, Mathf.Max(0f, total - barWidth));
+            }
+
+            // Clamp target in case the window was resized
+            _tabScrollTarget = Mathf.Clamp(_tabScrollTarget, 0f, Mathf.Max(0f, total - barWidth));
+
+            // Smooth scroll animation
+            {
+                double now = EditorApplication.timeSinceStartup;
+                float dt = Mathf.Clamp((float)(now - _tabScrollTime), 0f, 0.05f);
+                _tabScrollTime = now;
+                _tabScroll.x = Mathf.Lerp(_tabScroll.x, _tabScrollTarget, dt * 14f);
+                if (Mathf.Abs(_tabScroll.x - _tabScrollTarget) < 0.5f)
+                    _tabScroll.x = _tabScrollTarget;
+                else
+                    Repaint();
             }
 
             _tabScroll = GUI.BeginScrollView(barRect, _tabScroll,
@@ -271,6 +310,24 @@ namespace FolderTabs
             }
 
             GUI.EndScrollView();
+
+            // ── Overflow arrows ───────────────────────────────────────────────
+            if (hasOverflow)
+            {
+                bool canLeft  = _tabScrollTarget > 0.5f;
+                bool canRight = _tabScrollTarget < total - barWidth - 0.5f;
+
+                using (new EditorGUI.DisabledScope(!canLeft))
+                {
+                    if (GUI.Button(new Rect(0, 0, arrowW, TabHeight), "‹", EditorStyles.toolbarButton))
+                        _tabScrollTarget = Mathf.Max(0f, _tabScrollTarget - 80f);
+                }
+                using (new EditorGUI.DisabledScope(!canRight))
+                {
+                    if (GUI.Button(new Rect(scrollOffsetX + barWidth, 0, arrowW, TabHeight), "›", EditorStyles.toolbarButton))
+                        _tabScrollTarget = Mathf.Min(total - barWidth, _tabScrollTarget + 80f);
+                }
+            }
 
             // ── + dropdown button ─────────────────────────────────────────────
             var plusRect = new Rect(position.width - rightReserved, 1, 24, TabHeight - 2);
@@ -699,7 +756,20 @@ namespace FolderTabs
                 clipping = TextClipping.Clip,
                 normal = { textColor = isSelected ? Color.white : EditorStyles.miniLabel.normal.textColor }
             };
-            GUI.Label(labelRect, Path.GetFileName(path), labelStyle);
+            GUI.Label(labelRect, TruncateWithEllipsis(Path.GetFileName(path), labelStyle, labelRect.width), labelStyle);
+        }
+
+        static string TruncateWithEllipsis(string text, GUIStyle style, float maxWidth)
+        {
+            if (style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
+            int lo = 0, hi = text.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (style.CalcSize(new GUIContent(text[..mid] + "…")).x <= maxWidth) lo = mid;
+                else hi = mid - 1;
+            }
+            return lo == 0 ? "…" : text[..lo] + "…";
         }
 
         // ── Folder drag-drop handling ─────────────────────────────────────────
@@ -834,6 +904,7 @@ namespace FolderTabs
                 // On Windows, Shift+Scroll arrives as horizontal scroll (delta.y=0, delta.x!=0).
                 float rawScroll = Mathf.Abs(ev.delta.y) > 0.01f ? ev.delta.y : ev.delta.x;
                 int dir = rawScroll > 0 ? -1 : 1;
+                if (FolderTabsSettings.InvertScroll) dir = -dir;
                 if (ev.control || ev.command)
                 {
                     MoveTab(_selectedIndex, dir);
@@ -925,6 +996,7 @@ namespace FolderTabs
         {
             PersistActiveTabState();
             _selectedIndex = index;
+            _scrollToSelected = true;
             _selectedAssetPath = null;
             _renamingPath = null;
             _renameBuffer = null;

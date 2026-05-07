@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.3] — 2026-05-07
+
+### Added
+
+- **Tab bar overflow navigation** — `‹` and `›` arrow buttons appear at the edges when tabs exceed the bar width. Buttons disable automatically when the scroll is at its limit.
+- **Auto-scroll to active tab** — switching tabs (click, Shift+Scroll, Ctrl+T, Ctrl+Shift+T) automatically scrolls the tab bar to keep the selected tab visible.
+- **Smooth tab bar scroll animation** — tab bar scrolling lerps to the target position instead of jumping.
+- **Settings window** — **Window › Folder Tabs › Settings**. Initial option: *Invert Scroll Direction* for Shift+Scroll and Ctrl+Shift+Scroll.
+- **Window menu reorganized** — **Window › Folder Tabs** is now a submenu with *Open Folder Tabs* and *Settings*. Ctrl+T is registered via Unity's ShortcutManager and no longer appears as a menu entry.
+
+### Fixed
+
+- Tree view now shows folders before files at every depth level (previously files appeared first).
+- Grid view: file names that exceed the cell width now truncate with `…` instead of being clipped abruptly.
+
+---
+
 ## [1.0.2] — 2026-05-05
 
 ### Added

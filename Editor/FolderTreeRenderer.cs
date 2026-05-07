@@ -119,9 +119,6 @@ namespace FolderTabs
             EnsureCached(folderPath);
             var (files, folders) = _cache[folderPath];
 
-            foreach (var file in files)
-                DrawAssetRow(file, depth, contentWidth, onDragged);
-
             foreach (var sub in folders)
             {
                 bool wasExpanded = IsExpanded(sub);
@@ -136,6 +133,9 @@ namespace FolderTabs
                 if (nowExpanded)
                     DrawFolder(sub, depth + 1, contentWidth, onDragged, ref _unused);
             }
+
+            foreach (var file in files)
+                DrawAssetRow(file, depth, contentWidth, onDragged);
         }
 
         // ── Folder header ────────────────────────────────────────────────────
