@@ -831,7 +831,9 @@ namespace FolderTabs
             // Shift+Scroll → cycle tabs   |   Ctrl+Shift+Scroll → move tab
             if (ev.type == EventType.ScrollWheel && ev.shift && _tabs.Count > 1)
             {
-                int dir = ev.delta.y > 0 ? 1 : -1;
+                // On Windows, Shift+Scroll arrives as horizontal scroll (delta.y=0, delta.x!=0).
+                float rawScroll = Mathf.Abs(ev.delta.y) > 0.01f ? ev.delta.y : ev.delta.x;
+                int dir = rawScroll > 0 ? -1 : 1;
                 if (ev.control || ev.command)
                 {
                     MoveTab(_selectedIndex, dir);
