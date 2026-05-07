@@ -2,9 +2,9 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    internal static class FolderTabsInteractionHandler
+    internal static class BetterTabsInteractionHandler
     {
         public static void OpenAsset(string path)
         {
@@ -70,7 +70,6 @@ namespace FolderTabs
             EditorUtility.OpenPropertyEditor(obj);
         }
 
-        // Only place PingObject + Selection.activeObject is called — mirrors "Show in Project" in the Unity Project panel.
         public static void ShowInProject(string path)
         {
             var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
@@ -79,33 +78,31 @@ namespace FolderTabs
             EditorGUIUtility.PingObject(obj);
         }
 
-        // Adds "Create >" submenu items that create inside targetFolder.
         static void AddCreateSubmenu(GenericMenu menu, string targetFolder,
             System.Action<string> onRenameRequested, System.Action onRefresh)
         {
             menu.AddItem(new GUIContent("Create/Folder"), false, () =>
             {
-                FolderTabsCreator.CreateFolder(targetFolder, onRenameRequested);
+                BetterTabsCreator.CreateFolder(targetFolder, onRenameRequested);
                 onRefresh?.Invoke();
             });
             menu.AddItem(new GUIContent("Create/C# Script"), false, () =>
             {
-                FolderTabsCreator.CreateScript(targetFolder);
+                BetterTabsCreator.CreateScript(targetFolder);
                 onRefresh?.Invoke();
             });
             menu.AddItem(new GUIContent("Create/Scene"), false, () =>
             {
-                FolderTabsCreator.CreateScene(targetFolder);
+                BetterTabsCreator.CreateScene(targetFolder);
                 onRefresh?.Invoke();
             });
             menu.AddItem(new GUIContent("Create/Material"), false, () =>
             {
-                FolderTabsCreator.CreateMaterial(targetFolder);
+                BetterTabsCreator.CreateMaterial(targetFolder);
                 onRefresh?.Invoke();
             });
         }
 
-        // Context menu for a regular asset row. Creates land in the asset's parent folder.
         public static GenericMenu BuildContextMenu(
             string path,
             System.Action<string> onRenameRequested,
@@ -120,10 +117,7 @@ namespace FolderTabs
             menu.AddSeparator("");
 
             menu.AddItem(new GUIContent("Open"), false, () => OpenAsset(path));
-
-            // Only place PingObject + Selection.activeObject is called — mirrors "Show in Project".
             menu.AddItem(new GUIContent("Show in Project"), false, () => ShowInProject(path));
-
             menu.AddItem(new GUIContent("Reveal in Explorer"), false, () => RevealInExplorer(path));
             menu.AddSeparator("");
             menu.AddItem(new GUIContent("Rename"), false, () => onRenameRequested?.Invoke(path));
@@ -134,8 +128,7 @@ namespace FolderTabs
             });
             menu.AddItem(new GUIContent("Delete"), false, () =>
             {
-                if (Delete(path))
-                    onDeletedOrDuplicated?.Invoke(path);
+                if (Delete(path)) onDeletedOrDuplicated?.Invoke(path);
             });
             menu.AddSeparator("");
             menu.AddItem(new GUIContent("Copy Path"), false, () => CopyPath(path));
@@ -149,7 +142,6 @@ namespace FolderTabs
             return menu;
         }
 
-        // Context menu for a folder header row. Creates land inside the folder itself.
         public static GenericMenu BuildFolderContextMenu(
             string folderPath,
             System.Action<string> onRenameRequested,
@@ -161,15 +153,13 @@ namespace FolderTabs
             AddCreateSubmenu(menu, folderPath, onRenameRequested, onRefresh);
             menu.AddSeparator("");
 
-            // Only place PingObject + Selection.activeObject is called — mirrors "Show in Project".
             menu.AddItem(new GUIContent("Show in Project"), false, () => ShowInProject(folderPath));
             menu.AddItem(new GUIContent("Reveal in Explorer"), false, () => RevealInExplorer(folderPath));
             menu.AddSeparator("");
             menu.AddItem(new GUIContent("Rename"), false, () => onRenameRequested?.Invoke(folderPath));
             menu.AddItem(new GUIContent("Delete"), false, () =>
             {
-                if (Delete(folderPath))
-                    onDeletedOrDuplicated?.Invoke(folderPath);
+                if (Delete(folderPath)) onDeletedOrDuplicated?.Invoke(folderPath);
             });
             menu.AddSeparator("");
             menu.AddItem(new GUIContent("Copy Path"), false, () => CopyPath(folderPath));

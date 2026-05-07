@@ -1,10 +1,10 @@
 using UnityEditor;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    static class FolderTabsSettings
+    static class BetterTabsSettings
     {
-        const string KeyInvertScroll = "FolderTabs.InvertScroll";
+        const string KeyInvertScroll = "BetterTabs.InvertScroll";
 
         public static bool InvertScroll
         {

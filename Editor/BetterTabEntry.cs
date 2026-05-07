@@ -1,17 +1,17 @@
 using System;
 using System.Collections.Generic;
 
-namespace FolderTabs
+namespace BetterTabs
 {
     [Serializable]
-    public class FolderTabEntry
+    public class BetterTabEntry
     {
         public string path;
         public string name;
         public List<string> expandedPaths = new List<string>();
         public string searchQuery = "";
 
-        public FolderTabEntry(string assetPath)
+        public BetterTabEntry(string assetPath)
         {
             path = assetPath;
             name = System.IO.Path.GetFileName(assetPath);

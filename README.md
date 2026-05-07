@@ -1,19 +1,19 @@
-# Folder Tabs
+# BetterTabs
 
 A dockable **Project panel replacement** for Unity that lets you pin folders as tabs and work without constantly navigating the full asset tree.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
-![Version](https://img.shields.io/badge/version-1.0.5-blue)
+![Version](https://img.shields.io/badge/version-1.0.6-blue)
 ![Editor Only](https://img.shields.io/badge/scope-Editor%20only-orange)
 
 ---
 
-## Why Folder Tabs?
+## Why BetterTabs?
 
 The Unity Project panel is great for exploration — not for focus.  
 When you're iterating on a feature, you don't need the entire asset tree: you need **the three folders you're actually working in**, instantly reachable.
 
-Folder Tabs keeps those folders one click away, with the same interactions you already know from the native Project panel.
+BetterTabs keeps those folders one click away, with the same interactions you already know from the native Project panel.
 
 ---
 
@@ -34,13 +34,13 @@ Folder Tabs keeps those folders one click away, with the same interactions you a
 | **Tab overflow** | `‹` `›` arrows appear when tabs exceed the bar width, with smooth scroll animation |
 | **Browser shortcuts** | Ctrl+T / Ctrl+W / Ctrl+Shift+T + scroll navigation |
 | **Session persistence** | Tabs, expanded paths, and search query survive editor restarts |
-| **Settings** | Invert scroll direction — **Window › Folder Tabs › Settings** |
+| **Settings** | Invert scroll direction — **Window › BetterTabs › Settings** |
 
 ---
 
 ## Installation
 
-1. Download `FolderTabs.unitypackage` from the Unity Asset Store or the [releases page](https://github.com/panchuel/foldertabs-unity/releases).
+1. Download `BetterTabs.unitypackage` from the Unity Asset Store or the [releases page](https://github.com/panchuel/foldertabs-unity/releases).
 2. In Unity, go to **Assets › Import Package › Custom Package**.
 3. Select the downloaded file and click **Import**.
 
@@ -52,16 +52,16 @@ No additional setup is required. The tool is ready to use after import.
 2. Click **`+`** → **Add package from git URL**.
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.5
+   https://github.com/panchuel/foldertabs-unity.git#v1.0.6
    ```
 
 ---
 
 ## Quick Start
 
-1. Open the window: **Window › Folder Tabs › Open Folder Tabs**.
+1. Open the window: **Window › BetterTabs › Open BetterTabs**.
 2. Dock it anywhere — next to the Project panel, the Inspector, or as a floating window.
-3. Drag any folder from the native Project panel into the Folder Tabs window.
+3. Drag any folder from the native Project panel into the BetterTabs window.
 4. The folder opens as a tab. Drag more folders to add more tabs.
 5. Click a tab to switch, drag tabs to reorder them.
 
@@ -72,7 +72,7 @@ No additional setup is required. The tool is ready to use after import.
 ### Adding tabs
 
 - **Drag and drop** — drag any folder from the Project panel directly into the window.
-- **Ctrl+T** — pins the folder currently selected in the Project panel as a new tab (works without focusing the Folder Tabs window first).
+- **Ctrl+T** — pins the folder currently selected in the Project panel as a new tab (works without focusing the BetterTabs window first).
 - **`+` button** — opens a folder picker dialog.
 
 ### Browsing assets
@@ -151,7 +151,7 @@ This is an **Editor-only** tool. It has no effect on builds and adds no runtime 
 ## Known Limitations
 
 - **Tab state is stored in EditorPrefs.** If EditorPrefs are cleared, all tabs will be lost. This does not affect project assets.
-- **Ctrl+T uses Unity's ShortcutManager.** If it conflicts with another package, remap it via **Edit › Shortcuts… › Folder Tabs / Add Tab from Selection**.
+- **Ctrl+T uses Unity's ShortcutManager.** If it conflicts with another package, remap it via **Edit › Shortcuts… › BetterTabs / Add Tab from Selection**.
 - **Linux support is untested.** The tool should work but has not been verified on Linux editors.
 
 ---
@@ -171,7 +171,7 @@ Click the **Refresh** button in the toolbar, or right-click anywhere in the pane
 Make sure you are dragging from the **native Unity Project panel** (not from the OS file explorer). Dragging from the OS file manager into the window is not supported.
 
 **The window appears empty after docking.**  
-Resize the window slightly to trigger a repaint, or close and reopen it via **Window › Folder Tabs › Open Folder Tabs**.
+Resize the window slightly to trigger a repaint, or close and reopen it via **Window › BetterTabs › Open BetterTabs**.
 
 ---
 

@@ -1,14 +1,14 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    class FolderTabsSettingsWindow : EditorWindow
+    class BetterTabsSettingsWindow : EditorWindow
     {
-        [MenuItem("Window/Folder Tabs/Settings")]
+        [MenuItem("Window/BetterTabs/Settings")]
         public static void Open()
         {
-            var w = GetWindow<FolderTabsSettingsWindow>(true, "Folder Tabs — Settings");
+            var w = GetWindow<BetterTabsSettingsWindow>(true, "BetterTabs — Settings");
             w.minSize = new Vector2(320, 100);
             w.maxSize = new Vector2(320, 100);
             w.Show();
@@ -20,9 +20,9 @@ namespace FolderTabs
             EditorGUILayout.LabelField("Navigation", EditorStyles.boldLabel);
 
             EditorGUI.BeginChangeCheck();
-            bool invert = EditorGUILayout.Toggle("Invert Scroll Direction", FolderTabsSettings.InvertScroll);
+            bool invert = EditorGUILayout.Toggle("Invert Scroll Direction", BetterTabsSettings.InvertScroll);
             if (EditorGUI.EndChangeCheck())
-                FolderTabsSettings.InvertScroll = invert;
+                BetterTabsSettings.InvertScroll = invert;
 
             EditorGUILayout.HelpBox(
                 "When enabled, scroll up moves tabs right and scroll down moves tabs left.",

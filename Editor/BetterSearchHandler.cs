@@ -3,9 +3,9 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    internal class FolderSearchHandler
+    internal class BetterSearchHandler
     {
         const double DebounceSeconds = 0.2;
 
@@ -21,7 +21,6 @@ namespace FolderTabs
         public IReadOnlyList<string> Results => _results;
         public int ResultCount => _results.Count;
 
-        // Call from OnGUI every frame. Returns true when the committed query changed.
         public bool Tick(string currentQuery, string rootPath)
         {
             if (currentQuery != _pendingQuery)
@@ -39,11 +38,9 @@ namespace FolderTabs
                     RefreshResults(rootPath);
                     return true;
                 }
-                // Still debouncing — request another repaint after delay
                 return false;
             }
 
-            // Query hasn't changed but root might have
             if (_committedQuery != "" && rootPath != _searchedRootPath)
             {
                 RefreshResults(rootPath);
@@ -83,26 +80,22 @@ namespace FolderTabs
             foreach (var guid in guids)
             {
                 var assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                if (AssetDatabase.IsValidFolder(assetPath))
-                    continue;
+                if (AssetDatabase.IsValidFolder(assetPath)) continue;
                 var fileName = Path.GetFileNameWithoutExtension(assetPath);
                 if (fileName.ToLower().Contains(lower))
                     _results.Add(assetPath);
             }
         }
 
-        // Returns a RichText string with matching substring wrapped in <b> tags.
         public string Highlight(string assetPath)
         {
             var name = Path.GetFileNameWithoutExtension(assetPath);
-            if (string.IsNullOrEmpty(_committedQuery))
-                return name;
+            if (string.IsNullOrEmpty(_committedQuery)) return name;
 
             var lower = name.ToLower();
             var queryLower = _committedQuery.ToLower();
             int idx = lower.IndexOf(queryLower);
-            if (idx < 0)
-                return name;
+            if (idx < 0) return name;
 
             return name.Substring(0, idx)
                 + "<b>" + name.Substring(idx, _committedQuery.Length) + "</b>"

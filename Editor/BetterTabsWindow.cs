@@ -5,12 +5,12 @@ using UnityEditor;
 using UnityEditor.ShortcutManagement;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    public class FolderTabsWindow : EditorWindow
+    public class BetterTabsWindow : EditorWindow
     {
         // ── State ────────────────────────────────────────────────────────────
-        List<FolderTabEntry> _tabs = new List<FolderTabEntry>();
+        List<BetterTabEntry> _tabs = new List<BetterTabEntry>();
         int _selectedIndex = -1;
 
         // ── View toggle ──────────────────────────────────────────────────────
@@ -36,8 +36,8 @@ namespace FolderTabs
         readonly Stack<string> _closedTabStack = new Stack<string>();
 
         // ── Tree & search ─────────────────────────────────────────────────────
-        FolderTreeRenderer _tree;
-        FolderSearchHandler _search;
+        BetterTreeRenderer _tree;
+        BetterSearchHandler _search;
         string _searchInputText = "";
 
         // ── Local asset selection ─────────────────────────────────────────────
@@ -49,7 +49,7 @@ namespace FolderTabs
 
         // ── Dirty flag (set by postprocessor / projectChanged) ────────────────
         static bool s_dirty;
-        static FolderTabsWindow s_instance;
+        static BetterTabsWindow s_instance;
 
         // ── Constants ────────────────────────────────────────────────────────
         const int TabHeight = 22;
@@ -77,19 +77,19 @@ namespace FolderTabs
         }
 
         // ── Menu items ───────────────────────────────────────────────────────
-        [MenuItem("Window/Folder Tabs/Open Folder Tabs")]
+        [MenuItem("Window/BetterTabs/Open BetterTabs")]
         public static void Open()
         {
-            var w = GetWindow<FolderTabsWindow>();
+            var w = GetWindow<BetterTabsWindow>();
             w.Show();
         }
 
         // Ctrl+T global shortcut — registered via ShortcutManager, not MenuItem,
         // so it does not appear as a visible menu entry.
-        [Shortcut("Folder Tabs/Add Tab from Selection", KeyCode.T, ShortcutModifiers.Action)]
+        [Shortcut("BetterTabs/Add Tab from Selection", KeyCode.T, ShortcutModifiers.Action)]
         static void AddTabFromSelectionShortcut()
         {
-            var w = GetWindow<FolderTabsWindow>();
+            var w = GetWindow<BetterTabsWindow>();
             w.Show();
             w.Focus();
             w.OpenNewTab();
@@ -99,11 +99,11 @@ namespace FolderTabs
         void OnEnable()
         {
             s_instance = this;
-            titleContent = new GUIContent("Folder Tabs", LoadWindowIcon());
-            _search = new FolderSearchHandler();
-            _tree = new FolderTreeRenderer(OnFoldoutToggled);
+            titleContent = new GUIContent("BetterTabs", LoadWindowIcon());
+            _search = new BetterSearchHandler();
+            _tree = new BetterTreeRenderer(OnFoldoutToggled);
 
-            if (FolderTabsPrefs.Load(out var tabs, out var idx))
+            if (BetterTabsPrefs.Load(out var tabs, out var idx))
             {
                 _tabs = tabs;
                 _selectedIndex = tabs.Count == 0 ? -1 : Mathf.Clamp(idx, 0, tabs.Count - 1);
@@ -119,7 +119,7 @@ namespace FolderTabs
             s_instance = null;
             EditorApplication.projectChanged -= OnProjectChanged;
             PersistActiveTabState();
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
         }
 
         void OnProjectChanged()
@@ -329,42 +329,21 @@ namespace FolderTabs
                 }
             }
 
-            // ── + dropdown button ─────────────────────────────────────────────
+            // ── + button — adds selected folder if not already open ───────────
+            string selPath = Selection.activeObject != null
+                ? AssetDatabase.GetAssetPath(Selection.activeObject) : null;
+            bool canAdd = !string.IsNullOrEmpty(selPath)
+                && !_tabs.Any(t => t.path == selPath);
+
             var plusRect = new Rect(position.width - rightReserved, 1, 24, TabHeight - 2);
-            if (EditorGUI.DropdownButton(plusRect, new GUIContent("+"), FocusType.Passive, EditorStyles.toolbarButton))
-                ShowCreateMenu();
+            using (new EditorGUI.DisabledScope(!canAdd))
+            {
+                if (GUI.Button(plusRect, new GUIContent("+"), EditorStyles.toolbarButton))
+                    AddOrSelectTab(selPath);
+            }
 
             if (toRemove >= 0)
                 RemoveTab(toRemove);
-        }
-
-        void ShowCreateMenu()
-        {
-            string root = ActiveTabPath();
-            if (string.IsNullOrEmpty(root) || !ActiveTabIsFolder()) return;
-
-            var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("Folder"), false, () =>
-            {
-                FolderTabsCreator.CreateFolder(root, StartRename);
-                RequestRefresh();
-            });
-            menu.AddItem(new GUIContent("C# Script"), false, () =>
-            {
-                FolderTabsCreator.CreateScript(root);
-                RequestRefresh();
-            });
-            menu.AddItem(new GUIContent("Scene"), false, () =>
-            {
-                FolderTabsCreator.CreateScene(root);
-                RequestRefresh();
-            });
-            menu.AddItem(new GUIContent("Material"), false, () =>
-            {
-                FolderTabsCreator.CreateMaterial(root);
-                RequestRefresh();
-            });
-            menu.ShowAsContext();
         }
 
         void DrawTabAt(int index, float x, float width, Texture2D icon, bool active, bool ghost)
@@ -430,7 +409,7 @@ namespace FolderTabs
 
         void CommitTabDrag()
         {
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
             Repaint();
         }
 
@@ -558,13 +537,13 @@ namespace FolderTabs
             float btnX = cx - btnW * 1.5f - 4f;
 
             if (GUI.Button(new Rect(btnX, btnY, btnW, 22f), "Open"))
-                FolderTabsInteractionHandler.OpenAsset(path);
+                BetterTabsInteractionHandler.OpenAsset(path);
 
             if (GUI.Button(new Rect(btnX + btnW + 4f, btnY, btnW, 22f), "Show in Project"))
-                FolderTabsInteractionHandler.ShowInProject(path);
+                BetterTabsInteractionHandler.ShowInProject(path);
 
             if (GUI.Button(new Rect(btnX + (btnW + 4f) * 2f, btnY, btnW, 22f), "Reveal in Explorer"))
-                FolderTabsInteractionHandler.RevealInExplorer(path);
+                BetterTabsInteractionHandler.RevealInExplorer(path);
         }
 
         // ── Tree view ─────────────────────────────────────────────────────────
@@ -579,7 +558,7 @@ namespace FolderTabs
                 CommitRename,
                 CancelRename,
                 OnAssetModified,
-                FolderTabsWindow.RequestRefresh);
+                BetterTabsWindow.RequestRefresh);
 
             float contentHeight = _tree.MeasureHeight(rootPath);
             var contentRect = new Rect(0, 0, listRect.width - 16, Mathf.Max(contentHeight, listRect.height));
@@ -636,12 +615,12 @@ namespace FolderTabs
             {
                 if (ev.button == 0)
                 {
-                    if (ev.clickCount == 2) { FolderTabsInteractionHandler.OpenAsset(path); ev.Use(); }
+                    if (ev.clickCount == 2) { BetterTabsInteractionHandler.OpenAsset(path); ev.Use(); }
                     else { OnAssetSelected(path); ev.Use(); }
                 }
                 else if (ev.button == 1)
                 {
-                    var menu = FolderTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
+                    var menu = BetterTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
                     menu.ShowAsContext();
                     ev.Use();
                 }
@@ -728,7 +707,7 @@ namespace FolderTabs
                     if (ev.clickCount == 2)
                     {
                         if (isFolder) AddOrSelectTab(path);
-                        else FolderTabsInteractionHandler.OpenAsset(path);
+                        else BetterTabsInteractionHandler.OpenAsset(path);
                         ev.Use();
                     }
                     else { OnAssetSelected(path); ev.Use(); }
@@ -736,8 +715,8 @@ namespace FolderTabs
                 else if (ev.button == 1)
                 {
                     var menu = isFolder
-                        ? FolderTabsInteractionHandler.BuildFolderContextMenu(path, StartRename, OnAssetModified, RequestRefresh)
-                        : FolderTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
+                        ? BetterTabsInteractionHandler.BuildFolderContextMenu(path, StartRename, OnAssetModified, RequestRefresh)
+                        : BetterTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
                     menu.ShowAsContext();
                     ev.Use();
                 }
@@ -879,7 +858,7 @@ namespace FolderTabs
             {
                 string err = AssetDatabase.RenameAsset(path, trimmed);
                 if (!string.IsNullOrEmpty(err))
-                    Debug.LogError($"FolderTabs: Rename failed — {err}");
+                    Debug.LogError($"BetterTabs: Rename failed — {err}");
                 AssetDatabase.Refresh();
                 _tree.InvalidateCache();
             }
@@ -904,7 +883,7 @@ namespace FolderTabs
                 // On Windows, Shift+Scroll arrives as horizontal scroll (delta.y=0, delta.x!=0).
                 float rawScroll = Mathf.Abs(ev.delta.y) > 0.01f ? ev.delta.y : ev.delta.x;
                 int dir = rawScroll > 0 ? -1 : 1;
-                if (FolderTabsSettings.InvertScroll) dir = -dir;
+                if (BetterTabsSettings.InvertScroll) dir = -dir;
                 if (ev.control || ev.command)
                 {
                     MoveTab(_selectedIndex, dir);
@@ -976,7 +955,7 @@ namespace FolderTabs
             // Wrap-around so both scroll directions always produce movement.
             int target = (index + direction + _tabs.Count) % _tabs.Count;
             SwapTabs(index, target);
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
             Repaint();
         }
 
@@ -987,9 +966,9 @@ namespace FolderTabs
             {
                 if (_tabs[i].path == path) { SelectTab(i); return; }
             }
-            _tabs.Add(new FolderTabEntry(path));
+            _tabs.Add(new BetterTabEntry(path));
             SelectTab(_tabs.Count - 1);
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
         }
 
         void SelectTab(int index)
@@ -1012,7 +991,7 @@ namespace FolderTabs
 
             RestoreActiveTabState();
             Repaint();
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
         }
 
         void RemoveTab(int index)
@@ -1032,7 +1011,7 @@ namespace FolderTabs
                 _tree.InvalidateCache();
                 RestoreActiveTabState();
             }
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
             Repaint();
         }
 
@@ -1085,7 +1064,7 @@ namespace FolderTabs
             if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count)
             {
                 _tree.SaveExpandedState(_tabs[_selectedIndex].expandedPaths);
-                FolderTabsPrefs.Save(_tabs, _selectedIndex);
+                BetterTabsPrefs.Save(_tabs, _selectedIndex);
             }
         }
 
@@ -1095,7 +1074,7 @@ namespace FolderTabs
             _search.Clear();
             if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count)
                 _tabs[_selectedIndex].searchQuery = "";
-            FolderTabsPrefs.Save(_tabs, _selectedIndex);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
             _assetScroll = Vector2.zero;
             Repaint();
         }
@@ -1128,7 +1107,7 @@ namespace FolderTabs
 
         static Texture2D LoadWindowIcon()
         {
-            foreach (var guid in AssetDatabase.FindAssets("t:Script FolderTabsWindow"))
+            foreach (var guid in AssetDatabase.FindAssets("t:Script BetterTabsWindow"))
             {
                 var scriptPath = AssetDatabase.GUIDToAssetPath(guid);
                 if (!scriptPath.EndsWith("FolderTabsWindow.cs")) continue;
@@ -1137,5 +1116,6 @@ namespace FolderTabs
             }
             return null;
         }
+
     }
 }

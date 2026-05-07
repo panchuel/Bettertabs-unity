@@ -3,9 +3,9 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    internal class FolderTreeRenderer
+    internal class BetterTreeRenderer
     {
         const int RowHeight = 20;
         const int IndentWidth = 12;
@@ -29,7 +29,7 @@ namespace FolderTabs
         System.Action<string> _onAssetChanged;
         System.Action         _onRefreshRequested;
 
-        public FolderTreeRenderer(System.Action onChanged)
+        public BetterTreeRenderer(System.Action onChanged)
         {
             _onChanged = onChanged;
         }
@@ -155,7 +155,7 @@ namespace FolderTabs
                 if (folderIcon != null)
                     GUI.DrawTexture(new Rect(rect.x + indent + 2, rect.y + 2, 16, 16), folderIcon, ScaleMode.ScaleToFit);
 
-                GUI.SetNextControlName("FolderTabsRenameField");
+                GUI.SetNextControlName("BetterTabsRenameField");
                 var nameArea = new Rect(rect.x + indent + 22, rect.y + 1, rect.width - indent - 60, rect.height - 2);
                 string newName = EditorGUI.TextField(nameArea, _renameBuffer, EditorStyles.miniTextField);
                 if (newName != _renameBuffer) _renameBuffer = newName;
@@ -168,7 +168,7 @@ namespace FolderTabs
                     { _onRenameCancel?.Invoke(); ev.Use(); }
                 }
 
-                if (GUI.GetNameOfFocusedControl() != "FolderTabsRenameField"
+                if (GUI.GetNameOfFocusedControl() != "BetterTabsRenameField"
                     && ev.type == EventType.Repaint && _renamingPath != null)
                     _onRenameCommit?.Invoke(_renameBuffer);
 
@@ -196,7 +196,7 @@ namespace FolderTabs
             // ── Right-click context menu ───────────────────────────────────────
             if (ev.type == EventType.ContextClick && rect.Contains(ev.mousePosition))
             {
-                var menu = FolderTabsInteractionHandler.BuildFolderContextMenu(
+                var menu = BetterTabsInteractionHandler.BuildFolderContextMenu(
                     folderPath, _onRenameRequested, _onAssetChanged, _onRefreshRequested);
                 menu.ShowAsContext();
                 ev.Use();
@@ -232,13 +232,13 @@ namespace FolderTabs
             {
                 if (ev.button == 0)
                 {
-                    if (ev.clickCount == 2) { FolderTabsInteractionHandler.OpenAsset(path); ev.Use(); }
+                    if (ev.clickCount == 2) { BetterTabsInteractionHandler.OpenAsset(path); ev.Use(); }
                     else { _onSelected?.Invoke(path); ev.Use(); }
                 }
                 else if (ev.button == 1)
                 {
                     // Right-click shows menu without changing visual selection
-                    var menu = FolderTabsInteractionHandler.BuildContextMenu(
+                    var menu = BetterTabsInteractionHandler.BuildContextMenu(
                         path, _onRenameRequested, _onAssetChanged, _onRefreshRequested);
                     menu.ShowAsContext();
                     ev.Use();
@@ -262,7 +262,7 @@ namespace FolderTabs
 
             if (isRenaming)
             {
-                GUI.SetNextControlName("FolderTabsRenameField");
+                GUI.SetNextControlName("BetterTabsRenameField");
                 string newName = EditorGUI.TextField(nameArea, _renameBuffer,
                     isSelected ? SelectedTextField() : EditorStyles.miniTextField);
                 if (newName != _renameBuffer) _renameBuffer = newName;
@@ -275,7 +275,7 @@ namespace FolderTabs
                     { _onRenameCancel?.Invoke(); ev.Use(); }
                 }
 
-                if (GUI.GetNameOfFocusedControl() != "FolderTabsRenameField"
+                if (GUI.GetNameOfFocusedControl() != "BetterTabsRenameField"
                     && ev.type == EventType.Repaint && _renamingPath != null)
                     _onRenameCommit?.Invoke(_renameBuffer);
             }
@@ -307,7 +307,7 @@ namespace FolderTabs
             if (ev.type != EventType.KeyDown) return;
 
             if (ev.keyCode == KeyCode.Return || ev.keyCode == KeyCode.KeypadEnter)
-            { FolderTabsInteractionHandler.OpenAsset(_selectedAssetPath); ev.Use(); }
+            { BetterTabsInteractionHandler.OpenAsset(_selectedAssetPath); ev.Use(); }
             else if (ev.keyCode == KeyCode.F2)
             { _onRenameRequested?.Invoke(_selectedAssetPath); ev.Use(); }
         }
@@ -346,7 +346,7 @@ namespace FolderTabs
             {
                 string err = AssetDatabase.MoveAsset(srcPath, destPath);
                 if (!string.IsNullOrEmpty(err))
-                    Debug.LogError($"FolderTabs: Move failed — {err}");
+                    Debug.LogError($"BetterTabs: Move failed — {err}");
                 AssetDatabase.Refresh();
             });
             menu.AddItem(new GUIContent("Copy here"), false, () =>

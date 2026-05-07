@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.6] — 2026-05-07
+
+### Added
+
+- **Rebranded to BetterTabs** — package name, namespace, menu paths, window title, and EditorPrefs keys updated throughout. Existing sessions migrate automatically on first open.
+- **`+` button accepts any asset** — the add button now enables for any selected asset in the Project panel, not just folders. Non-folder assets open as pinned asset tabs.
+
+### Fixed
+
+- Non-folder asset tabs (scripts, materials, prefabs, etc.) now persist correctly across editor restarts. Previously only folder tabs were restored on load.
+
+---
+
 ## [1.0.5] — 2026-05-07
 
 ### Added
@@ -7,8 +20,8 @@
 - **Tab bar overflow navigation** — `‹` and `›` arrow buttons appear at the edges when tabs exceed the bar width. Buttons disable automatically when the scroll is at its limit.
 - **Auto-scroll to active tab** — switching tabs (click, Shift+Scroll, Ctrl+T, Ctrl+Shift+T) automatically scrolls the tab bar to keep the selected tab visible.
 - **Smooth tab bar scroll animation** — tab bar scrolling lerps to the target position instead of jumping.
-- **Settings window** — **Window › Folder Tabs › Settings**. Initial option: *Invert Scroll Direction* for Shift+Scroll and Ctrl+Shift+Scroll.
-- **Window menu reorganized** — **Window › Folder Tabs** is now a submenu with *Open Folder Tabs* and *Settings*. Ctrl+T is registered via Unity's ShortcutManager and no longer appears as a menu entry.
+- **Settings window** — **Window › BetterTabs › Settings**. Initial option: *Invert Scroll Direction* for Shift+Scroll and Ctrl+Shift+Scroll.
+- **Window menu reorganized** — **Window › BetterTabs** is now a submenu with *Open BetterTabs* and *Settings*. Ctrl+T is registered via Unity's ShortcutManager and no longer appears as a menu entry.
 
 ### Fixed
 
@@ -21,7 +34,7 @@
 
 ### Added
 
-- **Ctrl+T** — Add tab from the currently selected folder or asset in the Project panel. Fires globally via the Unity menu system; no need to focus the Folder Tabs window first.
+- **Ctrl+T** — Add tab from the currently selected folder or asset in the Project panel. Fires globally via the Unity menu system; no need to focus the BetterTabs window first.
 - **Ctrl+W** — Close the active tab.
 - **Ctrl+Shift+T** — Reopen the last closed tab. Skips tabs that are already open.
 - **Shift+Scroll** — Cycle through tabs (wraps around).

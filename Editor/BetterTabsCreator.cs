@@ -3,9 +3,9 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    internal static class FolderTabsCreator
+    internal static class BetterTabsCreator
     {
         public static string CreateFolder(string parentPath, System.Action<string> onRenameRequested)
         {

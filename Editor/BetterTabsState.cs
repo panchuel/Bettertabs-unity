@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
     [Serializable]
-    public class FolderTabSnapshot
+    public class BetterTabSnapshot
     {
         public string folderPath;
         public List<string> expandedPaths = new List<string>();
@@ -13,10 +13,10 @@ namespace FolderTabs
     }
 
     [Serializable]
-    public class FolderTabsState
+    public class BetterTabsState
     {
         public List<string> tabPaths = new List<string>();
         public int selectedIndex = 0;
-        public List<FolderTabSnapshot> snapshots = new List<FolderTabSnapshot>();
+        public List<BetterTabSnapshot> snapshots = new List<BetterTabSnapshot>();
     }
 }

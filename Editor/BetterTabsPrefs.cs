@@ -2,15 +2,15 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-namespace FolderTabs
+namespace BetterTabs
 {
-    internal static class FolderTabsPrefs
+    internal static class BetterTabsPrefs
     {
-        static string PrefsKey => $"FolderTabs_State_{Application.productName}";
+        static string PrefsKey => $"BetterTabs_State_{Application.productName}";
 
-        public static void Save(List<FolderTabEntry> tabs, int selectedIndex)
+        public static void Save(List<BetterTabEntry> tabs, int selectedIndex)
         {
-            var state = new FolderTabsState
+            var state = new BetterTabsState
             {
                 selectedIndex = selectedIndex
             };
@@ -18,7 +18,7 @@ namespace FolderTabs
             foreach (var tab in tabs)
             {
                 state.tabPaths.Add(tab.path);
-                state.snapshots.Add(new FolderTabSnapshot
+                state.snapshots.Add(new BetterTabSnapshot
                 {
                     folderPath = tab.path,
                     expandedPaths = new List<string>(tab.expandedPaths),
@@ -29,9 +29,9 @@ namespace FolderTabs
             EditorPrefs.SetString(PrefsKey, JsonUtility.ToJson(state));
         }
 
-        public static bool Load(out List<FolderTabEntry> tabs, out int selectedIndex)
+        public static bool Load(out List<BetterTabEntry> tabs, out int selectedIndex)
         {
-            tabs = new List<FolderTabEntry>();
+            tabs = new List<BetterTabEntry>();
             selectedIndex = 0;
 
             if (!EditorPrefs.HasKey(PrefsKey))
@@ -41,11 +41,11 @@ namespace FolderTabs
             if (string.IsNullOrEmpty(json))
                 return false;
 
-            var state = JsonUtility.FromJson<FolderTabsState>(json);
+            var state = JsonUtility.FromJson<BetterTabsState>(json);
             if (state == null)
                 return false;
 
-            var snapMap = new System.Collections.Generic.Dictionary<string, FolderTabSnapshot>();
+            var snapMap = new System.Collections.Generic.Dictionary<string, BetterTabSnapshot>();
             if (state.snapshots != null)
                 foreach (var snap in state.snapshots)
                     if (snap != null && snap.folderPath != null)
@@ -55,10 +55,12 @@ namespace FolderTabs
             {
                 if (string.IsNullOrEmpty(tabPath))
                     continue;
-                if (!AssetDatabase.IsValidFolder(tabPath))
+                // Skip if the asset no longer exists (deleted or moved outside Unity).
+                if (!AssetDatabase.IsValidFolder(tabPath) &&
+                    AssetDatabase.AssetPathToGUID(tabPath) == "")
                     continue;
 
-                var entry = new FolderTabEntry(tabPath);
+                var entry = new BetterTabEntry(tabPath);
 
                 if (snapMap.TryGetValue(tabPath, out var snap))
                 {
