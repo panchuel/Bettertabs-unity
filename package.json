@@ -1,6 +1,6 @@
 {
   "name": "com.panchuel.foldertabs",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "displayName": "Folder Tabs",
   "description": "A dockable editor window that lets you pin project folders as tabs and browse their contents with full Project panel parity.",
   "unity": "2021.3",

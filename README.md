@@ -3,7 +3,7 @@
 A dockable **Project panel replacement** for Unity that lets you pin folders as tabs and work without constantly navigating the full asset tree.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
-![Version](https://img.shields.io/badge/version-1.0.3-blue)
+![Version](https://img.shields.io/badge/version-1.0.4-blue)
 ![Editor Only](https://img.shields.io/badge/scope-Editor%20only-orange)
 
 ---
@@ -52,7 +52,7 @@ No additional setup is required. The tool is ready to use after import.
 2. Click **`+`** → **Add package from git URL**.
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.3
+   https://github.com/panchuel/foldertabs-unity.git#v1.0.4
    ```
 
 ---
