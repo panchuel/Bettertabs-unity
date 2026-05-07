@@ -52,7 +52,7 @@ No additional setup is required. The tool is ready to use after import.
 2. Click **`+`** → **Add package from git URL**.
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.5
+   https://github.com/panchuel/foldertabs-unity.git
    ```
 
 ---
