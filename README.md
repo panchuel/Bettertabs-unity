@@ -148,7 +148,6 @@ This is an **Editor-only** tool. It has no effect on builds and adds no runtime 
 
 ## Known Limitations
 
-- **Editor-only** — not available at runtime.
 - **Tab state is stored in EditorPrefs.** If EditorPrefs are cleared, all tabs will be lost. This does not affect project assets.
 - **Ctrl+T may conflict** with other editor tools that register the same global shortcut. If it does not respond, check for conflicts in other installed packages.
 - **Linux support is untested.** The tool should work but has not been verified on Linux editors.
