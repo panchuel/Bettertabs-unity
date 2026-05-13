@@ -1,6 +1,6 @@
 {
   "name": "com.panchuel.bettertabs",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "displayName": "BetterTabs",
   "description": "A dockable editor window that lets you pin project folders as tabs and browse their contents with full Project panel parity.",
   "unity": "2021.3",
