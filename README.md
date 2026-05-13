@@ -40,7 +40,7 @@ BetterTabs keeps those folders one click away, with the same interactions you al
 
 ## Installation
 
-1. Download `BetterTabs.unitypackage` from the Unity Asset Store or the [releases page](https://github.com/panchuel/foldertabs-unity/releases).
+1. Download `BetterTabs.unitypackage` from the Unity Asset Store or the [releases page](https://github.com/panchuel/bettertabs-unity/releases).
 2. In Unity, go to **Assets › Import Package › Custom Package**.
 3. Select the downloaded file and click **Import**.
 
@@ -52,7 +52,7 @@ No additional setup is required. The tool is ready to use after import.
 2. Click **`+`** → **Add package from git URL**.
 3. Paste:
    ```
-   https://github.com/panchuel/foldertabs-unity.git#v1.0.6
+   https://github.com/panchuel/foldertabs-unity.git
    ```
 
 ---
@@ -185,4 +185,4 @@ Resize the window slightly to trigger a repaint, or close and reopen it via **Wi
 ## Support
 
 Found a bug or have a feature request?  
-Open an issue at [github.com/panchuel/foldertabs-unity/issues](https://github.com/panchuel/foldertabs-unity/issues).
+Open an issue at [github.com/panchuel/bettertabs-unity/issues](https://github.com/panchuel/bettertabs-unity/issues).
