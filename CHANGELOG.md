@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7] — 2026-05-13
+
+### Added
+
+- **How to Use window** — **Window › BetterTabs › How to Use** opens a scrollable reference panel covering all ways to add tabs (drag-drop, `+` button, Ctrl+T), close and restore them (Ctrl+W, Ctrl+Shift+T), navigate and reorder (Shift+Scroll, Ctrl+Shift+Scroll, overflow arrows), browse content (search, grid/list toggle, context menus), and pin non-folder assets.
+
+---
+
 ## [1.0.6] — 2026-05-07
 
 ### Added
