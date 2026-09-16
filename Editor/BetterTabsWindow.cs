@@ -1,9 +1,10 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.ShortcutManagement;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace BetterTabs
 {
@@ -17,26 +18,19 @@ namespace BetterTabs
         bool _gridView = false;
 
         // ── Scroll positions ─────────────────────────────────────────────────
-        Vector2 _tabScroll;
         Vector2 _assetScroll;
-        bool _scrollToSelected;
-        float _tabScrollTarget;
-        double _tabScrollTime;
 
         // ── Folder drag-drop state ───────────────────────────────────────────
         bool _isDragHovering;
 
         // ── Tab reorder drag state ────────────────────────────────────────────
-        int _dragTabIndex = -1;
-        int _pressedTabIndex = -1;
-        float _dragTabOffsetX;
-        float _dragTabCurrentX;
 
         // ── Closed-tab history (Ctrl+Shift+T) ────────────────────────────────
-        readonly Stack<BetterTabEntry> _closedTabStack = new Stack<BetterTabEntry>();
+        // Keeps the index too, so reopening restores the tab where it was.
+        readonly Stack<(BetterTabEntry tab, int index)> _closedTabStack =
+            new Stack<(BetterTabEntry, int)>();
 
         // ── Tree & search ─────────────────────────────────────────────────────
-        BetterTreeRenderer _tree;
         BetterSearchHandler _search;
         string _searchInputText = "";
 
@@ -44,34 +38,15 @@ namespace BetterTabs
         string _selectedAssetPath;
 
         // ── Embedded inspector ────────────────────────────────────────────────
-        Editor _assetEditor;
-        string _assetEditorPath;
-        Vector2 _inspectorScroll;
 
         // ── Prefab / SceneObject hierarchy view ───────────────────────────────
         readonly Dictionary<string, GameObject> _loadedPrefabRoots = new Dictionary<string, GameObject>();
-        readonly Dictionary<string, BetterHierarchyRenderer> _hierarchyRenderers = new Dictionary<string, BetterHierarchyRenderer>();
-        readonly List<Editor> _stackedEditors = new List<Editor>();
-        string _stackedEditorsKey;
-        Vector2 _hierarchyScroll;
-        Vector2 _hierarchyInspectorScroll;
-        bool _hierarchySplitterDragging;
         float _previewHeight = 180f;
         bool _previewCollapsed;
-        bool _previewPressed;
-        bool _previewDragging;
-        float _previewPressedMouseY;
-        const float PreviewHeaderH = 22f;
-        const float PreviewSettingsW = 110f;
-        const float PreviewMinH = 60f;
-        const float PreviewMaxH = 600f;
-        const float DragThresholdPx = 3f;
         static string PreviewHeightKey => $"BetterTabs_PreviewHeight_{Application.productName}";
         static string PreviewCollapsedKey => $"BetterTabs_PreviewCollapsed_{Application.productName}";
 
         // ── Inline rename ─────────────────────────────────────────────────────
-        string _renamingPath;
-        string _renameBuffer;
 
         // ── Dirty flag (set by postprocessor / projectChanged) ────────────────
         static bool s_dirty;
@@ -79,6 +54,8 @@ namespace BetterTabs
 
         // ── Constants ────────────────────────────────────────────────────────
         const int TabHeight = 22;
+        const float MinPanelW = 120f;
+        const int GoPaneMode = 4;
         const int AssetRowHeight = 20;
         const int GridIconSize = 64;
         const int GridCellSize = 80;
@@ -86,18 +63,34 @@ namespace BetterTabs
         // ── Project panel ─────────────────────────────────────────────────────
         bool _projectPanelOpen;
         float _splitterX = 220f;
-        bool _splitterDragging;
-        BetterProjectTreeRenderer _projectTree;
-        Vector2 _projectScroll;
-        bool _leftPanelHasFocus;
+        BetterAssetTreeView _projectTree;
         Object _lastSyncedSelection;
 
-        // ── Layout bounds (set each frame in OnGUI) ───────────────────────────
+        // ── UI Toolkit ────────────────────────────────────────────────────────
+        BetterTabsBarView _tabBar;
+        IMGUIContainer _rightContainer;
+        IMGUIContainer _searchToolbar;
+        BetterAssetTreeView _contentTree;
+        BetterAssetInspectorView _assetInspector;
+        BetterAssetListView _assetList;
+        BetterGameObjectView _goView;
+        VisualElement _rightPane;
+        int _rightPaneMode = -1;
+        TwoPaneSplitView _splitView;
+
+        // Size of the IMGUI drawing area. Equals the window size while everything
+        // still lives in one container; once areas move into their own containers
+        // each one reports its own size, so layout code stays position-independent.
+        float _viewW;
+        float _viewH;
+
+        // ── Layout bounds (set each frame while drawing) ──────────────────────
         float _rightX;
         float _rightW;
 
         static string ProjectPanelOpenKey => $"BetterTabs_ProjectPanelOpen_{Application.productName}";
         static string SplitterXKey => $"BetterTabs_SplitterX_{Application.productName}";
+        static string HierarchySplitterKey => $"BetterTabs_HierarchySplitter_{Application.productName}";
         static string ProjectExpandedKey => $"BetterTabs_ProjectExpanded_{Application.productName}";
 
         // ── Static API (used by postprocessor) ───────────────────────────────
@@ -149,18 +142,9 @@ namespace BetterTabs
             s_instance = this;
             titleContent = new GUIContent("BetterTabs", LoadWindowIcon());
             _search = new BetterSearchHandler();
-            _tree = new BetterTreeRenderer(OnFoldoutToggled);
 
-            _projectTree = new BetterProjectTreeRenderer();
-            _projectTree.Setup(
-                OnProjectPanelItemClicked,
-                AddOrSelectTab,
-                OnAssetDragged,
-                () => { _projectTree.InvalidateCache(); RequestRefresh(); },
-                ScrollProjectPanelToPath);
             _projectPanelOpen = EditorPrefs.GetBool(ProjectPanelOpenKey, false);
             _splitterX = EditorPrefs.GetFloat(SplitterXKey, 220f);
-            _projectTree.LoadExpandedState(EditorPrefs.GetString(ProjectExpandedKey, ""));
             _previewHeight = EditorPrefs.GetFloat(PreviewHeightKey, 180f);
             _previewCollapsed = EditorPrefs.GetBool(PreviewCollapsedKey, false);
 
@@ -184,13 +168,15 @@ namespace BetterTabs
             EditorApplication.projectChanged -= OnProjectChanged;
             Selection.selectionChanged -= OnUnitySelectionChanged;
             EditorApplication.update -= OnEditorUpdate;
-            if (_assetEditor != null) { DestroyImmediate(_assetEditor); _assetEditor = null; _assetEditorPath = null; }
+            _assetInspector?.DestroyEditor();
             SaveAndUnloadAllPrefabs();
-            DestroyStackedEditors();
+            _goView?.Invalidate();
             PersistActiveTabState();
             BetterTabsPrefs.Save(_tabs, _selectedIndex);
             EditorPrefs.SetBool(ProjectPanelOpenKey, _projectPanelOpen);
-            EditorPrefs.SetFloat(SplitterXKey, _splitterX);
+            EditorPrefs.SetFloat(SplitterXKey, CurrentSplitterX());
+            if (_goView != null)
+                EditorPrefs.SetFloat(HierarchySplitterKey, _goView.CurrentSplitterX());
             EditorPrefs.SetFloat(PreviewHeightKey, _previewHeight);
             EditorPrefs.SetBool(PreviewCollapsedKey, _previewCollapsed);
             if (_projectTree != null)
@@ -206,9 +192,25 @@ namespace BetterTabs
         // custom window depending on context, so also watch the selection each tick.
         void OnEditorUpdate()
         {
+            // Both run here rather than while drawing: swapping the tree in or out
+            // modifies the visual hierarchy, which throws during an IMGUI layout pass,
+            // and the right IMGUI container is hidden in tree mode so it would never
+            // see the dirty flag.
+            UpdateRightPaneMode();
+
+            if (s_dirty)
+            {
+                s_dirty = false;
+                _projectTree?.Rebuild();
+                _contentTree?.Rebuild();
+                Repaint();
+            }
+
             if (Selection.activeObject == _lastSyncedSelection) return;
             _lastSyncedSelection = Selection.activeObject;
             OnUnitySelectionChanged();
+            // The + button is enabled only when the selection is not already a tab.
+            UpdateTabBarButtons();
         }
 
         // Mirror the Unity selection into the left project panel when the user selects
@@ -226,75 +228,346 @@ namespace BetterTabs
             // don't clobber a multi-selection.
             if (_projectTree.GetSelectedPaths().Contains(path)) return;
 
-            _projectTree.SetSelection(path);
+            _projectTree.SetSelectedPath(path);
             _projectTree.ExpandToPath(path);
             ScrollProjectPanelToPath(path);
             Repaint();
         }
 
         // ── GUI ──────────────────────────────────────────────────────────────
-        void OnGUI()
+        // ── UI Toolkit root ──────────────────────────────────────────────────
+        // Migration scaffolding: the window root is UI Toolkit, and the legacy IMGUI
+        // drawing runs inside a single IMGUIContainer. Each migrated area moves out of
+        // this container into real VisualElements, so the tool keeps working throughout.
+        void CreateGUI()
         {
-            if (s_dirty)
+            VisualElement root = rootVisualElement;
+            root.style.flexGrow = 1;
+            // TrickleDown: seen before the trees, which consume plain arrow keys.
+            root.RegisterCallback<WheelEvent>(OnRootWheel, TrickleDown.TrickleDown);
+            root.RegisterCallback<KeyDownEvent>(OnRootKeyDown, TrickleDown.TrickleDown);
+
+            StyleSheet sheet = LoadStyleSheet();
+            if (sheet != null) root.styleSheets.Add(sheet);
+
+            _tabBar = new BetterTabsBarView();
+            _tabBar.TabSelected += SelectTab;
+            _tabBar.TabClosed += RemoveTab;
+            _tabBar.TabContextMenu += ShowTabContextMenu;
+            _tabBar.TabMoved += OnTabMoved;
+            _tabBar.AddClicked += AddTabFromSelection;
+            _tabBar.PingClicked += () => PingTab(_selectedIndex);
+            _tabBar.PanelToggleClicked += ToggleProjectPanel;
+            // Dropping assets on the bar creates tabs (was IMGUI DragPerform before).
+            _tabBar.RegisterCallback<DragUpdatedEvent>(OnTabBarDragUpdated);
+            _tabBar.RegisterCallback<DragPerformEvent>(OnTabBarDragPerform);
+            root.Add(_tabBar);
+
+            // Left/right panels split by a native TwoPaneSplitView (replaces the
+            // hand-rolled splitter). Child 0 is the collapsible project panel.
+            _splitView = new TwoPaneSplitView(0, Mathf.Max(MinPanelW, _splitterX), TwoPaneSplitViewOrientation.Horizontal);
+            _splitView.style.flexGrow = 1;
+
+            _projectTree = new BetterAssetTreeView(multiSelect: true, showTypeColumn: false, showAddButton: true);
+            _projectTree.Rebuild();
+            _projectTree.style.minWidth = MinPanelW;
+            _projectTree.ItemSelected += OnProjectPanelItemClicked;
+            _projectTree.ItemActivated += AddOrSelectTab;
+            _projectTree.ItemsDragged += OnAssetDragged;
+            _projectTree.RefreshRequested += RequestRefresh;
+            _projectTree.LoadExpandedState(EditorPrefs.GetString(ProjectExpandedKey, ""));
+            _splitView.Add(_projectTree);
+
+            // Right pane: search toolbar on top, then either the native content tree
+            // or the remaining IMGUI views (asset pin, prefab, grid, search results).
+            _rightPane = new VisualElement();
+            _rightPane.style.flexGrow = 1;
+            _rightPane.style.minWidth = MinPanelW;
+
+            _searchToolbar = new IMGUIContainer(DrawSearchToolbarIMGUI);
+            _searchToolbar.style.height = TabHeight;
+            _searchToolbar.style.flexShrink = 0;
+            _rightPane.Add(_searchToolbar);
+
+            _contentTree = new BetterAssetTreeView(multiSelect: false, showTypeColumn: true, showAddButton: false);
+            _contentTree.ItemSelected += OnAssetSelected;
+            _contentTree.ItemActivated += BetterTabsInteractionHandler.OpenAsset;
+            _contentTree.ItemsDragged += OnAssetDragged;
+            _contentTree.RefreshRequested += RequestRefresh;
+            _rightPane.Add(_contentTree);
+
+            _assetInspector = new BetterAssetInspectorView();
+            _assetInspector.OpenRequested += BetterTabsInteractionHandler.OpenAsset;
+            _assetInspector.PreviewHeightChanged += h =>
             {
-                s_dirty = false;
-                _tree.InvalidateCache();
-                _projectTree?.InvalidateCache();
-                Repaint();
-            }
-
-            if (Event.current.type == EventType.MouseLeaveWindow)
+                _previewHeight = h;
+                EditorPrefs.SetFloat(PreviewHeightKey, h);
+            };
+            _assetInspector.PreviewCollapsedChanged += c =>
             {
-                _dragTabIndex = -1;
-                _pressedTabIndex = -1;
-                if (_splitterDragging) _splitterDragging = false;
-            }
+                _previewCollapsed = c;
+                EditorPrefs.SetBool(PreviewCollapsedKey, c);
+            };
+            _assetInspector.SetPreviewState(_previewHeight, _previewCollapsed);
+            _rightPane.Add(_assetInspector);
 
-            HandleKeyboardShortcuts();
-            HandleDragHover();
+            _assetList = new BetterAssetListView();
+            _assetList.HighlightProvider = p => _search.Highlight(p);
+            _assetList.ItemSelected += OnAssetSelected;
+            _assetList.ItemActivated += OnListItemActivated;
+            _assetList.ItemDragged += OnAssetDraggedSingle;
+            _assetList.RenameRequested += StartRename;
+            _assetList.RefreshRequested += RequestRefresh;
+            _rightPane.Add(_assetList);
 
-            DrawTabBar();
+            _rightContainer = new IMGUIContainer(DrawRightPanelIMGUI);
+            // Required so the IMGUI content still receives keys (F2, Delete, arrows)
+            _rightContainer.focusable = true;
+            _rightContainer.style.flexGrow = 1;
+            _rightPane.Add(_rightContainer);
 
-            // Layout bounds for the right panel
-            _rightX = _projectPanelOpen ? _splitterX + 4 : 0;
-            _rightW = position.width - _rightX;
+            _splitView.Add(_rightPane);
 
-            // Track which panel has keyboard focus based on last click (don't consume)
-            if (Event.current.type == EventType.MouseDown && Event.current.mousePosition.y > TabHeight)
-                _leftPanelHasFocus = _projectPanelOpen && Event.current.mousePosition.x < _splitterX;
+            root.Add(_splitView);
+            // Deferred: the split view must resolve its layout before it can collapse.
+            _splitView.schedule.Execute(ApplyProjectPanelVisibility);
 
-            // Left project panel
-            if (_projectPanelOpen)
+            RefreshTabBar();
+        }
+
+        // Route keys (F2, Delete, arrows) to the IMGUI content when the window is focused.
+        void OnFocus()
+        {
+            _rightContainer?.Focus();
+        }
+
+        // Uses the container rect so each migrated area reports its own drawing size.
+        void UpdateViewSize(IMGUIContainer container)
+        {
+            Rect view = container != null ? container.contentRect : Rect.zero;
+            _viewW = (view.width > 0f && !float.IsNaN(view.width)) ? view.width : position.width;
+            _viewH = (view.height > 0f && !float.IsNaN(view.height)) ? view.height : position.height;
+        }
+
+        // Live width of the project panel, so the split position persists across sessions.
+        float CurrentSplitterX()
+        {
+            if (_projectTree == null) return _splitterX;
+            float w = _projectTree.resolvedStyle.width;
+            return (w > 0f && !float.IsNaN(w)) ? w : _splitterX;
+        }
+
+        // Collapsing child 0 hides the project panel together with its splitter handle.
+        void ApplyProjectPanelVisibility()
+        {
+            if (_splitView == null) return;
+            if (_projectPanelOpen) _splitView.UnCollapse();
+            else _splitView.CollapseChild(0);
+        }
+
+        // The search toolbar lives in its own strip so the tree below it can be a
+        // real VisualElement rather than IMGUI.
+        void DrawSearchToolbarIMGUI()
+        {
+            UpdateViewSize(_searchToolbar);
+            _rightX = 0f;
+            _rightW = _viewW;
+            if (_tabs.Count > 0 && ActiveTabIsFolder()) DrawSearchToolbar();
+        }
+
+        // Chooses between the native tree and the IMGUI views, and keeps the tree
+        // pointed at the active tab folder.
+        // Feeds the flat list with either search hits or the folder contents.
+        void RefreshAssetList(bool searching)
+        {
+            if (_assetList == null) return;
+
+            if (searching)
             {
-                DrawProjectPanel(new Rect(0, TabHeight, _splitterX, position.height - TabHeight));
-                DrawSplitter();
-            }
-
-            // Right panel content
-            if (_tabs.Count == 0)
-            {
-                DrawEmptyState();
+                IReadOnlyList<string> results = _search.Results;
+                string header = $"{results.Count} result{(results.Count == 1 ? "" : "s")}";
+                _assetList.SetItems(results, BetterAssetListView.Mode.List, header);
             }
             else
             {
-                if (ActiveTabIsFolder()) DrawSearchToolbar();
-                DrawContent();
+                _assetList.SetItems(FolderContents(ActiveTabPath()), BetterAssetListView.Mode.Grid);
+            }
+            _assetList.SetSelected(_selectedAssetPath);
+        }
+
+        // Direct children of a folder, folders first.
+        static List<string> FolderContents(string rootPath)
+        {
+            List<string> folders = new List<string>();
+            List<string> files = new List<string>();
+            if (string.IsNullOrEmpty(rootPath)) return folders;
+
+            foreach (string guid in AssetDatabase.FindAssets("", new[] { rootPath }))
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                string parent = Path.GetDirectoryName(assetPath)?.Replace('\\', '/');
+                if (parent != rootPath) continue;
+
+                if (AssetDatabase.IsValidFolder(assetPath)) folders.Add(assetPath);
+                else files.Add(assetPath);
             }
 
-            // Fallback: only consume the drop if no folder row in the trees did.
-            HandleDragPerformFallback();
+            folders.AddRange(files);
+            return folders;
+        }
 
-            if (_isDragHovering)
-                DrawDropOverlay();
+        void OnListItemActivated(string path)
+        {
+            if (AssetDatabase.IsValidFolder(path)) AddOrSelectTab(path);
+            else BetterTabsInteractionHandler.OpenAsset(path);
+        }
+
+        // Grid and search results have no inline editing, so a rename request from
+        // them switches to the tree, which owns renaming.
+        void StartRename(string path)
+        {
+            if (_gridView) _gridView = false;
+            if (_search.IsSearching) ClearSearch();
+
+            UpdateRightPaneMode();
+            _contentTree?.ExpandToPath(path);
+            _contentTree?.StartRename(path);
+        }
+
+        // Built on demand: TwoPaneSplitView initialises from its first resolved
+        // geometry, so creating it while the pane is hidden leaves its drag line dead.
+        void EnsureGameObjectView()
+        {
+            if (_goView != null) return;
+
+            _goView = new BetterGameObjectView(EditorPrefs.GetFloat(HierarchySplitterKey, 220f));
+            _goView.SelectionChanged += OnHierarchySelectionChanged;
+            _goView.ValueChanged += OnGameObjectEdited;
+            _rightPane.Add(_goView);
+        }
+
+        // Resolves the tab target (loaded prefab root or scene object) and feeds it
+        // to the GameObject view.
+        void RefreshGameObjectView(BetterTabEntry tab)
+        {
+            if (_goView == null) return;
+
+            if (tab.kind == BetterTabKind.Prefab)
+            {
+                GameObject root = GetOrLoadPrefabRoot(tab.path);
+                if (root == null) _goView.ShowMessage("Could not load prefab.");
+                else _goView.SetTarget(root, tab.hierarchySelectionPath);
+                return;
+            }
+
+            if (!GlobalObjectId.TryParse(tab.globalObjectId, out GlobalObjectId gid))
+            {
+                _goView.ShowMessage("Invalid scene reference.");
+                return;
+            }
+
+            GameObject sceneRoot = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid) as GameObject;
+            if (sceneRoot == null)
+                _goView.ShowMessage("Scene not loaded or GameObject missing.\nOpen the scene to inspect this object.");
+            else
+                _goView.SetTarget(sceneRoot, tab.hierarchySelectionPath);
+        }
+
+        void OnHierarchySelectionChanged(string path)
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
+            _tabs[_selectedIndex].hierarchySelectionPath = path;
+        }
+
+        // Prefab tabs edit a loaded copy, so write it back after a change.
+        void OnGameObjectEdited()
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
+            BetterTabEntry tab = _tabs[_selectedIndex];
+            if (tab.kind != BetterTabKind.Prefab) return;
+
+            string prefabPath = tab.path;
+            EditorApplication.delayCall += () =>
+            {
+                if (_loadedPrefabRoots.TryGetValue(prefabPath, out GameObject root) && root != null)
+                    PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+            };
+        }
+
+        void UpdateRightPaneMode()
+        {
+            if (_contentTree == null) return;
+
+            bool isFolder = _tabs.Count > 0 && ActiveTabIsFolder();
+            bool treeMode = isFolder && !_search.IsSearching && !_gridView;
+            bool assetMode = _tabs.Count > 0 && _selectedIndex >= 0
+                && _tabs[_selectedIndex].kind == BetterTabKind.Asset;
+
+            bool searchMode = isFolder && _search.IsSearching;
+            bool gridMode = isFolder && !_search.IsSearching && _gridView;
+            bool listMode = searchMode || gridMode;
+
+            bool goMode = _tabs.Count > 0 && _selectedIndex >= 0
+                && (_tabs[_selectedIndex].kind == BetterTabKind.Prefab
+                    || _tabs[_selectedIndex].kind == BetterTabKind.SceneObject);
+
+            int mode = goMode ? GoPaneMode : (assetMode ? 2 : (treeMode ? 1 : (listMode ? 3 : 0)));
+
+            if (treeMode) _contentTree.SetRoot(ActiveTabPath());
+            if (assetMode) _assetInspector.SetAsset(ActiveTabPath());
+            if (listMode) RefreshAssetList(searchMode);
+            if (goMode)
+            {
+                EnsureGameObjectView();
+                RefreshGameObjectView(_tabs[_selectedIndex]);
+            }
+
+            if (mode == _rightPaneMode) return;
+
+            // Leaving this mode: the split view loses its width while hidden, so
+            // capture it before it goes away.
+            if (_rightPaneMode == GoPaneMode && _goView != null)
+                EditorPrefs.SetFloat(HierarchySplitterKey, _goView.CurrentSplitterX());
+
+            _rightPaneMode = mode;
+
+            _searchToolbar.style.height = isFolder ? TabHeight : 0f;
+            _contentTree.style.display = treeMode ? DisplayStyle.Flex : DisplayStyle.None;
+            _assetInspector.style.display = assetMode ? DisplayStyle.Flex : DisplayStyle.None;
+            _assetList.style.display = listMode ? DisplayStyle.Flex : DisplayStyle.None;
+            if (_goView != null)
+            {
+                _goView.style.display = goMode ? DisplayStyle.Flex : DisplayStyle.None;
+                if (goMode)
+                    _goView.RestoreSplitter(EditorPrefs.GetFloat(HierarchySplitterKey, 220f));
+            }
+            _rightContainer.style.display =
+                (treeMode || assetMode || listMode || goMode) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        void DrawRightPanelIMGUI()
+        {
+            UpdateViewSize(_rightContainer);
+
+            HandleDragHover();
+
+            // This container is the right panel, so content starts at its own origin.
+            _rightX = 0f;
+            _rightW = _viewW;
+
+            // Only reached when no dedicated view applies (no tabs, or no selection).
+            if (_tabs.Count == 0) DrawEmptyState();
+            else
+                GUI.Label(new Rect(0, 0, _viewW, _viewH), "No tab selected.",
+                    EditorStyles.centeredGreyMiniLabel);
 
             if (_searchInputText != _search.CommittedQuery)
                 Repaint();
         }
 
-        // ── Empty state ──────────────────────────────────────────────────────
         void DrawEmptyState()
         {
-            var r = new Rect(_rightX, 0, _rightW, position.height);
+            Rect r = new Rect(_rightX, 0, _rightW, _viewH);
 
             if (_isDragHovering)
             {
@@ -302,7 +575,7 @@ namespace BetterTabs
                 DrawBorder(r, new Color(0.3f, 0.6f, 1f, 0.8f), 2f);
             }
 
-            var style = new GUIStyle(EditorStyles.centeredGreyMiniLabel)
+            GUIStyle style = new GUIStyle(EditorStyles.centeredGreyMiniLabel)
             {
                 fontSize = 14,
                 normal = { textColor = _isDragHovering ? new Color(0.5f, 0.8f, 1f) : Color.gray }
@@ -310,283 +583,115 @@ namespace BetterTabs
             GUI.Label(r, "⊕ Drag a folder or asset here", style);
         }
 
-        // ── Tab bar ──────────────────────────────────────────────────────────
-        void DrawTabBar()
+        static StyleSheet LoadStyleSheet()
         {
-            bool showPingBtn = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
+            foreach (string guid in AssetDatabase.FindAssets("BetterTabs t:StyleSheet"))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (path.EndsWith("BetterTabs.uss"))
+                    return AssetDatabase.LoadAssetAtPath<StyleSheet>(path);
+            }
+            return null;
+        }
+
+        void OnTabBarDragUpdated(DragUpdatedEvent evt)
+        {
+            if (!IsDraggingAsset()) return;
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            evt.StopPropagation();
+        }
+
+        void OnTabBarDragPerform(DragPerformEvent evt)
+        {
+            if (!IsDraggingAsset()) return;
+
+            DragAndDrop.AcceptDrag();
+            foreach (string path in DragAndDrop.paths)
+                if (!string.IsNullOrEmpty(path))
+                    AddOrSelectTab(path);
+
+            if (DragAndDrop.objectReferences != null)
+                foreach (Object o in DragAndDrop.objectReferences)
+                    if (o is GameObject go && !AssetDatabase.Contains(go))
+                        AddOrSelectSceneObjectTab(go);
+
+            _isDragHovering = false;
+            _tabBar.SetDropHint(false);
+            evt.StopPropagation();
+        }
+
+        // ── Tab bar plumbing ──────────────────────────────────────────────────
+
+        void RefreshTabBar()
+        {
+            if (_tabBar == null) return;
+            _tabBar.SetTabs(_tabs, _selectedIndex);
+            UpdateTabBarButtons();
+        }
+
+        void UpdateTabBarButtons()
+        {
+            if (_tabBar == null) return;
+            bool showPing = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
                 && (_tabs[_selectedIndex].kind == BetterTabKind.SceneObject
                     || _tabs[_selectedIndex].kind == BetterTabKind.Prefab);
-            float rightReserved = showPingBtn ? 78f : 54f;
-            const float arrowW = 16f;
-            float fullBarWidth = position.width - rightReserved;
-            GUI.Box(new Rect(0, 0, position.width, TabHeight), GUIContent.none, EditorStyles.toolbar);
-
-            int count = _tabs.Count;
-            var widths = new float[count];
-            var starts = new float[count];
-            float total = 0f;
-            for (int i = 0; i < count; i++)
-            {
-                float lw = EditorStyles.toolbarButton.CalcSize(new GUIContent(_tabs[i].name)).x;
-                widths[i] = Mathf.Clamp(lw + 40, 80, 180);
-                starts[i] = total;
-                total += widths[i];
-            }
-
-            bool hasOverflow = total > fullBarWidth;
-            float scrollOffsetX = hasOverflow ? arrowW : 0f;
-            float barWidth = fullBarWidth - (hasOverflow ? arrowW * 2f : 0f);
-            var barRect = new Rect(scrollOffsetX, 0, barWidth, TabHeight);
-
-            // Auto-scroll to keep selected tab in view
-            if (_scrollToSelected && _selectedIndex >= 0 && _selectedIndex < count)
-            {
-                _scrollToSelected = false;
-                float tabStart = starts[_selectedIndex];
-                float tabEnd   = tabStart + widths[_selectedIndex];
-                float target   = _tabScrollTarget;
-                if (tabStart < target)
-                    target = tabStart;
-                else if (tabEnd > target + barWidth)
-                    target = tabEnd - barWidth;
-                _tabScrollTarget = Mathf.Clamp(target, 0f, Mathf.Max(0f, total - barWidth));
-            }
-
-            // Clamp target in case the window was resized
-            _tabScrollTarget = Mathf.Clamp(_tabScrollTarget, 0f, Mathf.Max(0f, total - barWidth));
-
-            // Smooth scroll animation
-            {
-                double now = EditorApplication.timeSinceStartup;
-                float dt = Mathf.Clamp((float)(now - _tabScrollTime), 0f, 0.05f);
-                _tabScrollTime = now;
-                _tabScroll.x = Mathf.Lerp(_tabScroll.x, _tabScrollTarget, dt * 14f);
-                if (Mathf.Abs(_tabScroll.x - _tabScrollTarget) < 0.5f)
-                    _tabScroll.x = _tabScrollTarget;
-                else
-                    Repaint();
-            }
-
-            _tabScroll = GUI.BeginScrollView(barRect, _tabScroll,
-                new Rect(0, 0, total, TabHeight),
-                false, false, GUIStyle.none, GUIStyle.none);
-
-            var ev = Event.current;
-            int toRemove = -1;
-
-            if (ev.type == EventType.MouseDown && ev.button == 0)
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    var tr = new Rect(starts[i], 0, widths[i], TabHeight);
-                    if (!tr.Contains(ev.mousePosition)) continue;
-                    var cr = new Rect(starts[i] + widths[i] - 16, 3, 14, 14);
-                    if (cr.Contains(ev.mousePosition)) break;
-                    _pressedTabIndex = i;
-                    _dragTabOffsetX = ev.mousePosition.x - starts[i];
-                    _dragTabCurrentX = starts[i];
-                    ev.Use();
-                    break;
-                }
-            }
-            else if (ev.type == EventType.MouseDrag && _pressedTabIndex >= 0)
-            {
-                if (_dragTabIndex < 0) _dragTabIndex = _pressedTabIndex;
-                _dragTabCurrentX = Mathf.Clamp(
-                    ev.mousePosition.x - _dragTabOffsetX,
-                    0f, total - widths[_dragTabIndex]);
-                CheckTabSwap(starts, widths);
-                ev.Use();
-                Repaint();
-            }
-            else if (ev.type == EventType.MouseUp && ev.button == 0)
-            {
-                bool acted = false;
-                if (_dragTabIndex >= 0) { CommitTabDrag(); acted = true; }
-                else if (_pressedTabIndex >= 0) { SelectTab(_pressedTabIndex); acted = true; }
-                _dragTabIndex = -1;
-                _pressedTabIndex = -1;
-                if (acted) ev.Use();
-            }
-
-            for (int i = 0; i < count; i++)
-            {
-                if (i == _dragTabIndex) continue;
-
-                var tabIcon = GetTabIcon(_tabs[i]);
-                DrawTabAt(i, starts[i], widths[i], tabIcon, active: i == _selectedIndex, ghost: false);
-
-                if (ev.type == EventType.ContextClick
-                    && new Rect(starts[i], 0, widths[i], TabHeight).Contains(ev.mousePosition))
-                {
-                    ShowTabContextMenu(i);
-                    ev.Use();
-                }
-
-                var closeRect = new Rect(starts[i] + widths[i] - 16, 3, 14, 14);
-                if (GUI.Button(closeRect, "×", EditorStyles.miniLabel))
-                    toRemove = i;
-            }
-
-            if (_dragTabIndex >= 0)
-                EditorGUI.DrawRect(
-                    new Rect(starts[_dragTabIndex], 0, widths[_dragTabIndex], TabHeight),
-                    new Color(0.3f, 0.6f, 1f, 0.18f));
-
-            if (_dragTabIndex >= 0 && _dragTabIndex < count)
-            {
-                DrawTabAt(_dragTabIndex, _dragTabCurrentX, widths[_dragTabIndex],
-                    GetTabIcon(_tabs[_dragTabIndex]), active: _dragTabIndex == _selectedIndex, ghost: true);
-            }
-
-            GUI.EndScrollView();
-
-            // ── Overflow arrows ───────────────────────────────────────────────
-            if (hasOverflow)
-            {
-                bool canLeft  = _tabScrollTarget > 0.5f;
-                bool canRight = _tabScrollTarget < total - barWidth - 0.5f;
-
-                using (new EditorGUI.DisabledScope(!canLeft))
-                {
-                    if (GUI.Button(new Rect(0, 0, arrowW, TabHeight), "‹", EditorStyles.toolbarButton))
-                        _tabScrollTarget = Mathf.Max(0f, _tabScrollTarget - 80f);
-                }
-                using (new EditorGUI.DisabledScope(!canRight))
-                {
-                    if (GUI.Button(new Rect(scrollOffsetX + barWidth, 0, arrowW, TabHeight), "›", EditorStyles.toolbarButton))
-                        _tabScrollTarget = Mathf.Min(total - barWidth, _tabScrollTarget + 80f);
-                }
-            }
-
-            // ── + button — adds the active Project / Hierarchy selection ─────
-            string selPath = null;
-            GameObject selSceneGO = null;
-            bool canAdd = false;
-            if (Selection.activeObject != null)
-            {
-                selPath = AssetDatabase.GetAssetPath(Selection.activeObject);
-                if (!string.IsNullOrEmpty(selPath))
-                {
-                    canAdd = !_tabs.Any(t => t.kind != BetterTabKind.SceneObject && t.path == selPath);
-                }
-                else if (Selection.activeObject is GameObject go && !AssetDatabase.Contains(go))
-                {
-                    selSceneGO = go;
-                    var gid = GlobalObjectId.GetGlobalObjectIdSlow(go).ToString();
-                    canAdd = !_tabs.Any(t => t.kind == BetterTabKind.SceneObject && t.globalObjectId == gid);
-                }
-            }
-
-            var plusRect = new Rect(position.width - rightReserved, 1, 24, TabHeight - 2);
-            using (new EditorGUI.DisabledScope(!canAdd))
-            {
-                if (GUI.Button(plusRect, new GUIContent("+"), EditorStyles.toolbarButton))
-                {
-                    if (selSceneGO != null) AddOrSelectSceneObjectTab(selSceneGO);
-                    else AddOrSelectTab(selPath);
-                }
-            }
-
-            // ── Ping button (only for Prefab / SceneObject tabs) ──────────────
-            if (showPingBtn)
-            {
-                var pingIcon = EditorGUIUtility.IconContent("d_SearchJump Icon");
-                var pingContent = pingIcon != null && pingIcon.image != null
-                    ? new GUIContent(pingIcon.image, "Ping in Hierarchy / Project")
-                    : new GUIContent("⊙", "Ping");
-                var pingRect = new Rect(position.width - 54, 1, 22, TabHeight - 2);
-                if (GUI.Button(pingRect, pingContent, EditorStyles.toolbarButton))
-                    PingTab(_selectedIndex);
-            }
-
-            // ── Project panel toggle ──────────────────────────────────────────
-            var panelIcon = EditorGUIUtility.FindTexture("d_Project");
-            var panelContent = panelIcon != null
-                ? new GUIContent(panelIcon, _projectPanelOpen ? "Hide Project Panel" : "Show Project Panel")
-                : new GUIContent(_projectPanelOpen ? "◁" : "▷", _projectPanelOpen ? "Hide Project Panel" : "Show Project Panel");
-
-            var panelBtnRect = new Rect(position.width - 28, 1, 26, TabHeight - 2);
-            if (GUI.Button(panelBtnRect, panelContent, EditorStyles.toolbarButton))
-            {
-                _projectPanelOpen = !_projectPanelOpen;
-                if (_projectPanelOpen)
-                {
-                    _projectTree.InvalidateCache();
-                    SyncProjectTreeHighlight();
-                }
-                EditorPrefs.SetBool(ProjectPanelOpenKey, _projectPanelOpen);
-            }
-
-            if (toRemove >= 0)
-                RemoveTab(toRemove);
+            _tabBar.SetButtonState(CanAddSelection(), showPing, _projectPanelOpen);
         }
 
-        void DrawTabAt(int index, float x, float width, Texture2D icon, bool active, bool ghost)
+        bool CanAddSelection()
         {
-            var drawRect = new Rect(x, 0, width, TabHeight);
+            if (Selection.activeObject == null) return false;
 
-            Color bg = ghost
-                ? new Color(0.2f, 0.45f, 0.8f, 0.9f)
-                : active
-                    ? new Color(0.25f, 0.47f, 0.75f, 0.5f)
-                    : Color.clear;
+            string selPath = AssetDatabase.GetAssetPath(Selection.activeObject);
+            if (!string.IsNullOrEmpty(selPath))
+                return !_tabs.Any(t => t.kind != BetterTabKind.SceneObject && t.path == selPath);
 
-            if (bg.a > 0)
-                EditorGUI.DrawRect(drawRect, bg);
-
-            if (icon != null)
-                GUI.DrawTexture(new Rect(x + 2, 2, 16, 16), icon, ScaleMode.ScaleToFit);
-
-            var labelStyle = new GUIStyle(EditorStyles.miniLabel)
+            if (Selection.activeObject is GameObject go && !AssetDatabase.Contains(go))
             {
-                clipping = TextClipping.Clip,
-                fontStyle = active ? FontStyle.Bold : FontStyle.Normal
-            };
-            if (ghost) labelStyle.normal.textColor = Color.white;
-
-            GUI.Label(new Rect(x + 20, 2, width - 38, TabHeight - 4), _tabs[index].name, labelStyle);
-        }
-
-        // ── Tab reorder helpers ───────────────────────────────────────────────
-
-        void CheckTabSwap(float[] starts, float[] widths)
-        {
-            if (_dragTabIndex < 0) return;
-
-            if (_dragTabIndex > 0)
-            {
-                int left = _dragTabIndex - 1;
-                if (_dragTabCurrentX < starts[left] + widths[left] * 0.5f)
-                {
-                    SwapTabs(_dragTabIndex, left);
-                    _dragTabIndex--;
-                    return;
-                }
+                string gid = GlobalObjectId.GetGlobalObjectIdSlow(go).ToString();
+                return !_tabs.Any(t => t.kind == BetterTabKind.SceneObject && t.globalObjectId == gid);
             }
+            return false;
+        }
 
-            if (_dragTabIndex < _tabs.Count - 1)
+        void AddTabFromSelection()
+        {
+            if (Selection.activeObject == null) return;
+
+            string selPath = AssetDatabase.GetAssetPath(Selection.activeObject);
+            if (!string.IsNullOrEmpty(selPath)) AddOrSelectTab(selPath);
+            else if (Selection.activeObject is GameObject go && !AssetDatabase.Contains(go))
+                AddOrSelectSceneObjectTab(go);
+        }
+
+        void ToggleProjectPanel()
+        {
+            _projectPanelOpen = !_projectPanelOpen;
+            if (_projectPanelOpen)
             {
-                int right = _dragTabIndex + 1;
-                if (_dragTabCurrentX + widths[_dragTabIndex] > starts[right] + widths[right] * 0.5f)
-                {
-                    SwapTabs(_dragTabIndex, right);
-                    _dragTabIndex++;
-                }
+                _projectTree.Rebuild();
+                SyncProjectTreeHighlight();
             }
+            ApplyProjectPanelVisibility();
+            EditorPrefs.SetBool(ProjectPanelOpenKey, _projectPanelOpen);
+            UpdateTabBarButtons();
         }
 
-        void SwapTabs(int i, int j)
+        // The view already moved the element, so only the model is updated here;
+        // rebuilding mid-drag would break the pointer capture.
+        void OnTabMoved(int from, int to)
         {
-            (_tabs[i], _tabs[j]) = (_tabs[j], _tabs[i]);
-            if (_selectedIndex == i) _selectedIndex = j;
-            else if (_selectedIndex == j) _selectedIndex = i;
-        }
+            if (from < 0 || from >= _tabs.Count || to < 0 || to >= _tabs.Count) return;
 
-        void CommitTabDrag()
-        {
+            BetterTabEntry moved = _tabs[from];
+            _tabs.RemoveAt(from);
+            _tabs.Insert(to, moved);
+
+            if (_selectedIndex == from) _selectedIndex = to;
+            else if (from < _selectedIndex && to >= _selectedIndex) _selectedIndex--;
+            else if (from > _selectedIndex && to <= _selectedIndex) _selectedIndex++;
+
             BetterTabsPrefs.Save(_tabs, _selectedIndex);
-            Repaint();
         }
 
         void ShowTabContextMenu(int index)
@@ -602,7 +707,7 @@ namespace BetterTabs
         // ── Search toolbar ────────────────────────────────────────────────────
         void DrawSearchToolbar()
         {
-            float y = TabHeight;
+            float y = 0f;
             var toolbarRect = new Rect(_rightX, y, _rightW, TabHeight);
             GUI.Box(toolbarRect, GUIContent.none, EditorStyles.toolbar);
 
@@ -646,294 +751,8 @@ namespace BetterTabs
         }
 
         // ── Content area ──────────────────────────────────────────────────────
-        void DrawContent()
-        {
-            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count)
-            {
-                var emptyRect = new Rect(_rightX, TabHeight, _rightW, position.height - TabHeight);
-                GUI.Label(emptyRect, "No tab selected.", EditorStyles.centeredGreyMiniLabel);
-                return;
-            }
-
-            var tab = _tabs[_selectedIndex];
-
-            switch (tab.kind)
-            {
-                case BetterTabKind.Asset:
-                {
-                    var pinRect = new Rect(_rightX, TabHeight, _rightW, position.height - TabHeight);
-                    DrawAssetPinView(pinRect, tab.path);
-                    return;
-                }
-                case BetterTabKind.Prefab:
-                case BetterTabKind.SceneObject:
-                {
-                    var pinRect = new Rect(_rightX, TabHeight, _rightW, position.height - TabHeight);
-                    DrawPrefabOrGameObjectView(pinRect, tab);
-                    return;
-                }
-            }
-
-            // Folder tab → tree / grid / search
-            string rootPath = tab.path;
-            float topOffset = TabHeight * 2;
-            var listRect = new Rect(_rightX, topOffset, _rightW, position.height - topOffset);
-
-            if (_search.IsSearching)
-            {
-                DrawSearchResults(listRect);
-                return;
-            }
-
-            if (_gridView)
-                DrawGridView(listRect, rootPath);
-            else
-                DrawTreeView(listRect, rootPath);
-
-            var ev = Event.current;
-            if (ev.type == EventType.ContextClick && listRect.Contains(ev.mousePosition))
-            {
-                BetterTabsInteractionHandler.BuildFolderContextMenu(
-                    rootPath, StartRename, OnAssetModified, RequestRefresh)
-                    .ShowAsContext();
-                ev.Use();
-            }
-
-            // Fallback drop zone: any unhandled drop in the right panel goes
-            // into the tab's root folder. Specific folder rows above already
-            // consumed their own drops via ev.Use().
-            _tree.HandleDropOnFolder(listRect, rootPath, ev);
-
-            // Visual: highlight the folder content area while dragging.
-            if (_isDragHovering)
-            {
-                EditorGUI.DrawRect(listRect, new Color(0.2f, 0.5f, 1f, 0.06f));
-                DrawBorder(listRect, new Color(0.3f, 0.6f, 1f, 0.6f), 1.5f);
-            }
-        }
-
         // ── Asset pin view (embedded inspector) ──────────────────────────────
-        void DrawAssetPinView(Rect r, string path)
-        {
-            if (_assetEditorPath != path)
-            {
-                if (_assetEditor != null) { DestroyImmediate(_assetEditor); _assetEditor = null; }
-                Object obj = AssetDatabase.LoadAssetAtPath<Object>(path);
-                if (obj != null)
-                {
-                    _assetEditor = Editor.CreateEditor(obj);
-                    if (_assetEditor != null)
-                    {
-                        // Modern Unity: editors gate property rendering via the
-                        // "expanded" foldout state + firstInspectedEditor flag.
-                        // Both properties are internal, so set via reflection.
-                        const System.Reflection.BindingFlags bf =
-                            System.Reflection.BindingFlags.Instance |
-                            System.Reflection.BindingFlags.NonPublic |
-                            System.Reflection.BindingFlags.Public;
-
-                        typeof(Editor).GetProperty("firstInspectedEditor", bf)
-                            ?.SetValue(_assetEditor, true);
-                        typeof(Editor).GetProperty("alwaysAllowExpansion", bf)
-                            ?.SetValue(_assetEditor, true);
-                        UnityEditorInternal.InternalEditorUtility
-                            .SetIsInspectorExpanded(obj, true);
-                    }
-                }
-                _assetEditorPath = path;
-                _inspectorScroll = Vector2.zero;
-            }
-
-            // Custom toolbar header
-            GUI.Box(new Rect(r.x, r.y, r.width, TabHeight), GUIContent.none, EditorStyles.toolbar);
-            Texture2D icon = AssetDatabase.GetCachedIcon(path) as Texture2D;
-            if (icon != null)
-                GUI.DrawTexture(new Rect(r.x + 4, r.y + 3, 16, 16), icon, ScaleMode.ScaleToFit);
-            GUI.Label(new Rect(r.x + 24, r.y, r.width - 52, TabHeight),
-                Path.GetFileNameWithoutExtension(path),
-                new GUIStyle(EditorStyles.miniLabel) { fontStyle = FontStyle.Bold });
-            if (GUI.Button(new Rect(r.xMax - 50, r.y + 1, 48, TabHeight - 2), "Open", EditorStyles.toolbarButton))
-                BetterTabsInteractionHandler.OpenAsset(path);
-
-            if (_assetEditor == null)
-            {
-                GUI.Label(new Rect(r.x, r.y + TabHeight, r.width, r.height - TabHeight),
-                    "Cannot inspect this asset.", EditorStyles.centeredGreyMiniLabel);
-                return;
-            }
-
-            // Reserve preview panel at the bottom
-            bool hasPreview = _assetEditor.HasPreviewGUI();
-            float previewBlockH = 0f;
-            if (hasPreview)
-            {
-                previewBlockH = PreviewHeaderH
-                    + (_previewCollapsed ? 0f : _previewHeight);
-            }
-
-            var inspectorArea = new Rect(r.x, r.y + TabHeight, r.width, r.height - TabHeight - previewBlockH);
-
-            // Inspector content
-            GUILayout.BeginArea(inspectorArea);
-            _inspectorScroll = EditorGUILayout.BeginScrollView(_inspectorScroll);
-            _assetEditor.DrawHeader();
-            _assetEditor.OnInspectorGUI();
-            EditorGUILayout.EndScrollView();
-            GUILayout.EndArea();
-
-            if (hasPreview)
-                DrawPreviewPanel(new Rect(r.x, r.yMax - previewBlockH, r.width, previewBlockH));
-
-            if (!EditorApplication.isPlaying && _assetEditor.RequiresConstantRepaint()) Repaint();
-        }
-
         // ── Hierarchy + Inspector view (Prefab / SceneObject tabs) ───────────
-        void DrawPrefabOrGameObjectView(Rect r, BetterTabEntry tab)
-        {
-            // Resolve root GameObject for the tab.
-            GameObject root = null;
-            string statusMessage = null;
-
-            if (tab.kind == BetterTabKind.Prefab)
-            {
-                root = GetOrLoadPrefabRoot(tab.path);
-                if (root == null) statusMessage = "Could not load prefab.";
-            }
-            else // SceneObject
-            {
-                if (GlobalObjectId.TryParse(tab.globalObjectId, out var gid))
-                {
-                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
-                    root = obj as GameObject;
-                    if (root == null) statusMessage = "Scene not loaded or GameObject missing.\nOpen the scene to inspect this object.";
-                }
-                else statusMessage = "Invalid scene reference.";
-            }
-
-            if (root == null)
-            {
-                GUI.Label(new Rect(r.x, r.y + 20, r.width, 60),
-                    statusMessage ?? "Unavailable", EditorStyles.centeredGreyMiniLabel);
-                return;
-            }
-
-            // ── Split: hierarchy (left) + inspector (right) ──────────────────
-            float splitterX = Mathf.Clamp(tab.hierarchySplitterX, 120f, r.width - 200f);
-            tab.hierarchySplitterX = splitterX;
-
-            var hierarchyRect = new Rect(r.x, r.y, splitterX, r.height);
-            var splitterRect  = new Rect(r.x + splitterX, r.y, 4f, r.height);
-            var inspectorRect = new Rect(r.x + splitterX + 4f, r.y,
-                r.width - splitterX - 4f, r.height);
-
-            DrawHierarchyPanel(hierarchyRect, tab, root);
-            DrawHierarchySplitter(splitterRect, tab);
-
-            // Resolve selected GameObject
-            var selectedTransform = string.IsNullOrEmpty(tab.hierarchySelectionPath)
-                ? root.transform
-                : BetterHierarchyRenderer.FindByPath(root.transform, tab.hierarchySelectionPath);
-            var selectedGO = selectedTransform != null ? selectedTransform.gameObject : root;
-
-            DrawGameObjectInspectorPanel(inspectorRect, tab, selectedGO);
-        }
-
-        void DrawHierarchyPanel(Rect r, BetterTabEntry tab, GameObject root)
-        {
-            // Background
-            EditorGUI.DrawRect(r, EditorGUIUtility.isProSkin
-                ? new Color(0.19f, 0.19f, 0.19f, 1f)
-                : new Color(0.76f, 0.76f, 0.76f, 1f));
-
-            // Get or create renderer for this tab
-            string key = TabKey(tab);
-            if (!_hierarchyRenderers.TryGetValue(key, out var renderer))
-            {
-                renderer = new BetterHierarchyRenderer();
-                _hierarchyRenderers[key] = renderer;
-                // Expand the selection chain on first render
-                if (!string.IsNullOrEmpty(tab.hierarchySelectionPath))
-                    renderer.ExpandPathChain(tab.hierarchySelectionPath);
-                else
-                    renderer.ExpandPathChain(root.transform.name);
-            }
-            renderer.Setup(root.transform, tab.hierarchySelectionPath,
-                path => { tab.hierarchySelectionPath = path; Repaint(); });
-
-            float contentH = renderer.MeasureHeight();
-            var contentRect = new Rect(0, 0, r.width - 16, Mathf.Max(contentH, r.height));
-
-            _hierarchyScroll = GUI.BeginScrollView(r, _hierarchyScroll, contentRect);
-            GUILayout.BeginArea(new Rect(0, 0, contentRect.width, Mathf.Max(contentH, 1f)));
-            renderer.Draw(contentRect.width);
-            GUILayout.EndArea();
-            GUI.EndScrollView();
-        }
-
-        void DrawHierarchySplitter(Rect splitterRect, BetterTabEntry tab)
-        {
-            EditorGUI.DrawRect(splitterRect, new Color(0.1f, 0.1f, 0.1f, 1f));
-            EditorGUIUtility.AddCursorRect(splitterRect, MouseCursor.ResizeHorizontal);
-            var ev = Event.current;
-            if (ev.type == EventType.MouseDown && splitterRect.Contains(ev.mousePosition) && ev.button == 0)
-            {
-                _hierarchySplitterDragging = true;
-                ev.Use();
-            }
-            if (_hierarchySplitterDragging)
-            {
-                if (ev.type == EventType.MouseDrag)
-                {
-                    tab.hierarchySplitterX = Mathf.Clamp(ev.mousePosition.x - _rightX, 120f, _rightW - 200f);
-                    ev.Use();
-                    Repaint();
-                }
-                else if (ev.type == EventType.MouseUp)
-                {
-                    _hierarchySplitterDragging = false;
-                    BetterTabsPrefs.Save(_tabs, _selectedIndex);
-                    ev.Use();
-                }
-            }
-        }
-
-        void DrawGameObjectInspectorPanel(Rect r, BetterTabEntry tab, GameObject target)
-        {
-            string key = TabKey(tab) + "|" + (tab.hierarchySelectionPath ?? "");
-            RefreshStackedEditors(key, target);
-
-            GUILayout.BeginArea(r);
-            _hierarchyInspectorScroll = EditorGUILayout.BeginScrollView(_hierarchyInspectorScroll);
-
-            EditorGUI.BeginChangeCheck();
-            foreach (var e in _stackedEditors)
-            {
-                if (e == null) continue;
-                try
-                {
-                    e.DrawHeader();
-                    e.OnInspectorGUI();
-                    EditorGUILayout.Space(2);
-                }
-                catch (System.Exception ex)
-                {
-                    GUILayout.Label($"Inspector error: {ex.Message}", EditorStyles.helpBox);
-                }
-            }
-            if (EditorGUI.EndChangeCheck() && tab.kind == BetterTabKind.Prefab)
-            {
-                string prefabPath = tab.path;
-                EditorApplication.delayCall += () =>
-                {
-                    if (_loadedPrefabRoots.TryGetValue(prefabPath, out var rt) && rt != null)
-                        PrefabUtility.SaveAsPrefabAsset(rt, prefabPath);
-                };
-            }
-
-            EditorGUILayout.EndScrollView();
-            GUILayout.EndArea();
-        }
-
         static string TabKey(BetterTabEntry tab)
         {
             return tab.kind == BetterTabKind.SceneObject
@@ -941,364 +760,10 @@ namespace BetterTabs
                 : tab.kind + "|" + tab.path;
         }
 
-        void DrawPreviewPanel(Rect r)
-        {
-            var ev = Event.current;
-
-            // ── Header bar (acts as click-toggle AND drag-to-resize handle) ──
-            var headerRect = new Rect(r.x, r.y, r.width, PreviewHeaderH);
-            GUI.Box(headerRect, GUIContent.none, EditorStyles.toolbar);
-
-            // Drag area = header minus the right-side preview settings buttons
-            var dragRect = new Rect(headerRect.x, headerRect.y,
-                headerRect.width - PreviewSettingsW, headerRect.height);
-            EditorGUIUtility.AddCursorRect(dragRect, MouseCursor.SplitResizeUpDown);
-
-            if (ev.type == EventType.MouseDown && dragRect.Contains(ev.mousePosition) && ev.button == 0)
-            {
-                _previewPressed = true;
-                _previewDragging = false;
-                _previewPressedMouseY = ev.mousePosition.y;
-                ev.Use();
-            }
-            else if (_previewPressed && ev.type == EventType.MouseDrag)
-            {
-                if (!_previewDragging
-                    && Mathf.Abs(ev.mousePosition.y - _previewPressedMouseY) > DragThresholdPx)
-                {
-                    _previewDragging = true;
-                    if (_previewCollapsed)
-                    {
-                        _previewCollapsed = false;
-                        EditorPrefs.SetBool(PreviewCollapsedKey, false);
-                    }
-                }
-                if (_previewDragging)
-                {
-                    _previewHeight = Mathf.Clamp(
-                        position.height - ev.mousePosition.y - PreviewHeaderH,
-                        PreviewMinH, PreviewMaxH);
-                    Repaint();
-                    ev.Use();
-                }
-            }
-            else if (_previewPressed && ev.type == EventType.MouseUp)
-            {
-                if (_previewDragging)
-                {
-                    EditorPrefs.SetFloat(PreviewHeightKey, _previewHeight);
-                }
-                else
-                {
-                    // Simple click → toggle collapse
-                    _previewCollapsed = !_previewCollapsed;
-                    EditorPrefs.SetBool(PreviewCollapsedKey, _previewCollapsed);
-                }
-                _previewPressed = false;
-                _previewDragging = false;
-                ev.Use();
-                Repaint();
-            }
-
-            // Chevron + label
-            var labelStyle = new GUIStyle(EditorStyles.boldLabel)
-            {
-                alignment = TextAnchor.MiddleLeft
-            };
-            GUI.Label(new Rect(headerRect.x + 6, headerRect.y, dragRect.width - 10, headerRect.height),
-                (_previewCollapsed ? "▶  " : "▼  ") + Path.GetFileNameWithoutExtension(_assetEditorPath),
-                labelStyle);
-
-            // Preview settings (right side)
-            if (!_previewCollapsed)
-            {
-                var settingsRect = new Rect(headerRect.xMax - PreviewSettingsW + 4, headerRect.y + 2,
-                    PreviewSettingsW - 8, headerRect.height - 4);
-                GUILayout.BeginArea(settingsRect);
-                GUILayout.BeginHorizontal();
-                _assetEditor.OnPreviewSettings();
-                GUILayout.EndHorizontal();
-                GUILayout.EndArea();
-
-                var contentRect = new Rect(r.x, r.y + PreviewHeaderH,
-                    r.width, r.height - PreviewHeaderH);
-                _assetEditor.DrawPreview(contentRect);
-            }
-        }
-
         // ── Tree view ─────────────────────────────────────────────────────────
-        void DrawTreeView(Rect listRect, string rootPath)
-        {
-            _tree.SetCallbacks(
-                _selectedAssetPath,
-                _renamingPath,
-                _renameBuffer,
-                OnAssetSelected,
-                StartRename,
-                CommitRename,
-                CancelRename,
-                OnAssetModified,
-                BetterTabsWindow.RequestRefresh);
-
-            float contentHeight = _tree.MeasureHeight(rootPath);
-            var contentRect = new Rect(0, 0, listRect.width - 16, Mathf.Max(contentHeight, listRect.height));
-
-            _assetScroll = GUI.BeginScrollView(listRect, _assetScroll, contentRect);
-
-            GUILayout.BeginArea(new Rect(0, 0, contentRect.width, contentHeight));
-            _tree.Draw(rootPath, contentRect.width, OnAssetDraggedSingle);
-            GUILayout.EndArea();
-
-            GUI.EndScrollView();
-
-            // Keyboard navigation may have moved the selection off-screen → scroll to it
-            string navPath = _tree.ConsumePendingScrollPath();
-            if (!string.IsNullOrEmpty(navPath))
-            {
-                float y = _tree.GetYPositionOf(navPath);
-                if (y >= 0f)
-                {
-                    if (y < _assetScroll.y)
-                        _assetScroll.y = y;
-                    else if (y + AssetRowHeight > _assetScroll.y + listRect.height)
-                        _assetScroll.y = y + AssetRowHeight - listRect.height;
-                    Repaint();
-                }
-            }
-
-            // Keep repainting while a rename is grabbing focus so it paints correctly
-            if (_tree.HasPendingRenameFocus) Repaint();
-        }
-
         // ── Search results ────────────────────────────────────────────────────
-        void DrawSearchResults(Rect listRect)
-        {
-            var results = _search.Results;
-            float headerH = EditorGUIUtility.singleLineHeight + 4;
-
-            var countRect = new Rect(listRect.x + 4, listRect.y, listRect.width - 8, headerH);
-            var countStyle = new GUIStyle(EditorStyles.miniLabel)
-                { normal = { textColor = new Color(0.6f, 0.6f, 0.6f) } };
-            GUI.Label(countRect,
-                $"{results.Count} result{(results.Count == 1 ? "" : "s")}", countStyle);
-
-            var scrollArea = new Rect(listRect.x, listRect.y + headerH, listRect.width, listRect.height - headerH);
-            float totalH = results.Count * AssetRowHeight;
-            var contentRect = new Rect(0, 0, scrollArea.width - 16, totalH);
-
-            _assetScroll = GUI.BeginScrollView(scrollArea, _assetScroll, contentRect);
-
-            for (int i = 0; i < results.Count; i++)
-            {
-                var path = results[i];
-                var rowRect = new Rect(0, i * AssetRowHeight, contentRect.width, AssetRowHeight);
-
-                bool isSelected = path == _selectedAssetPath;
-                if (isSelected)
-                    EditorGUI.DrawRect(rowRect, new Color(0.17f, 0.36f, 0.53f, 1f));
-                else if (i % 2 == 0)
-                    EditorGUI.DrawRect(rowRect, new Color(0, 0, 0, 0.04f));
-
-                DrawSearchResultRow(rowRect, path, isSelected);
-            }
-
-            GUI.EndScrollView();
-        }
-
-        void DrawSearchResultRow(Rect rowRect, string path, bool isSelected)
-        {
-            var ev = Event.current;
-
-            if (ev.type == EventType.MouseDown && rowRect.Contains(ev.mousePosition) && ev.button == 0)
-            {
-                if (ev.clickCount == 2) { BetterTabsInteractionHandler.OpenAsset(path); ev.Use(); }
-                else { OnAssetSelected(path); ev.Use(); }
-            }
-            if (ev.type == EventType.ContextClick && rowRect.Contains(ev.mousePosition))
-            {
-                BetterTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh)
-                    .ShowAsContext();
-                ev.Use();
-            }
-            if (ev.type == EventType.MouseDrag && rowRect.Contains(ev.mousePosition))
-            { OnAssetDraggedSingle(path); ev.Use(); }
-
-            var icon = AssetDatabase.GetCachedIcon(path) as Texture2D;
-            if (icon != null)
-                GUI.DrawTexture(new Rect(rowRect.x + 2, rowRect.y + 2, 16, 16), icon, ScaleMode.ScaleToFit);
-
-            var richStyle = new GUIStyle(EditorStyles.miniLabel) { richText = true };
-            if (isSelected) richStyle.normal.textColor = Color.white;
-            GUI.Label(new Rect(rowRect.x + 22, rowRect.y, rowRect.width - 120, rowRect.height),
-                _search.Highlight(path), richStyle);
-
-            var typeStyle = new GUIStyle(EditorStyles.miniLabel)
-            {
-                alignment = TextAnchor.MiddleRight,
-                normal = { textColor = isSelected ? new Color(0.8f, 0.8f, 0.8f) : new Color(0.5f, 0.5f, 0.5f) }
-            };
-            GUI.Label(new Rect(rowRect.xMax - 100, rowRect.y, 96, rowRect.height),
-                AssetDatabase.GetMainAssetTypeAtPath(path)?.Name ?? "", typeStyle);
-        }
-
         // ── Grid view ─────────────────────────────────────────────────────────
-        void DrawGridView(Rect listRect, string rootPath)
-        {
-            var guids = AssetDatabase.FindAssets("", new string[] { rootPath });
-            var folders = new List<string>();
-            var files   = new List<string>();
-            foreach (var guid in guids)
-            {
-                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                var parent = Path.GetDirectoryName(assetPath)?.Replace('\\', '/');
-                if (parent != rootPath) continue;
-                if (AssetDatabase.IsValidFolder(assetPath)) folders.Add(assetPath);
-                else                                        files.Add(assetPath);
-            }
-            var assets = new List<string>(folders.Count + files.Count);
-            assets.AddRange(folders);
-            assets.AddRange(files);
-
-            int cols = Mathf.Max(1, (int)(listRect.width / GridCellSize));
-            int rows = Mathf.CeilToInt((float)assets.Count / cols);
-            float totalH = rows * GridCellSize;
-            var contentRect = new Rect(0, 0, listRect.width - 16, totalH);
-
-            _assetScroll = GUI.BeginScrollView(listRect, _assetScroll, contentRect);
-
-            for (int i = 0; i < assets.Count; i++)
-            {
-                int col = i % cols;
-                int row = i / cols;
-                DrawGridCell(new Rect(col * GridCellSize, row * GridCellSize, GridCellSize, GridCellSize), assets[i]);
-            }
-
-            GUI.EndScrollView();
-        }
-
-        void DrawGridCell(Rect cellRect, string path)
-        {
-            bool isFolder = AssetDatabase.IsValidFolder(path);
-
-            Texture2D icon;
-            if (isFolder)
-                icon = EditorGUIUtility.FindTexture("Folder Icon");
-            else
-            {
-                icon = AssetPreview.GetAssetPreview(AssetDatabase.LoadAssetAtPath<Object>(path));
-                if (icon == null) icon = AssetDatabase.GetCachedIcon(path) as Texture2D;
-            }
-
-            var ev = Event.current;
-
-            bool isSelected = path == _selectedAssetPath;
-            if (isSelected)
-                EditorGUI.DrawRect(cellRect, new Color(0.17f, 0.36f, 0.53f, 0.6f));
-
-            if (ev.type == EventType.MouseDown && cellRect.Contains(ev.mousePosition) && ev.button == 0)
-            {
-                if (ev.clickCount == 2)
-                {
-                    if (isFolder) AddOrSelectTab(path);
-                    else BetterTabsInteractionHandler.OpenAsset(path);
-                    ev.Use();
-                }
-                else { OnAssetSelected(path); ev.Use(); }
-            }
-            if (ev.type == EventType.ContextClick && cellRect.Contains(ev.mousePosition))
-            {
-                var menu = isFolder
-                    ? BetterTabsInteractionHandler.BuildFolderContextMenu(path, StartRename, OnAssetModified, RequestRefresh)
-                    : BetterTabsInteractionHandler.BuildContextMenu(path, StartRename, OnAssetModified, RequestRefresh);
-                menu.ShowAsContext();
-                ev.Use();
-            }
-            if (ev.type == EventType.MouseDrag && cellRect.Contains(ev.mousePosition))
-            { OnAssetDraggedSingle(path); ev.Use(); }
-
-            var iconRect = new Rect(cellRect.x + (GridCellSize - GridIconSize) / 2, cellRect.y + 4, GridIconSize, GridIconSize);
-            if (icon != null)
-                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit);
-
-            var labelRect = new Rect(cellRect.x + 2, cellRect.y + GridCellSize - 18, GridCellSize - 4, 16);
-            var labelStyle = new GUIStyle(EditorStyles.miniLabel)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                clipping = TextClipping.Clip,
-                normal = { textColor = isSelected ? Color.white : EditorStyles.miniLabel.normal.textColor }
-            };
-            GUI.Label(labelRect, TruncateWithEllipsis(Path.GetFileName(path), labelStyle, labelRect.width), labelStyle);
-        }
-
-        static string TruncateWithEllipsis(string text, GUIStyle style, float maxWidth)
-        {
-            if (style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
-            int lo = 0, hi = text.Length;
-            while (lo < hi)
-            {
-                int mid = (lo + hi + 1) / 2;
-                if (style.CalcSize(new GUIContent(text[..mid] + "…")).x <= maxWidth) lo = mid;
-                else hi = mid - 1;
-            }
-            return lo == 0 ? "…" : text[..lo] + "…";
-        }
-
         // ── Project panel ─────────────────────────────────────────────────────
-        void DrawProjectPanel(Rect r)
-        {
-            // Background
-            EditorGUI.DrawRect(r, EditorGUIUtility.isProSkin
-                ? new Color(0.19f, 0.19f, 0.19f, 1f)
-                : new Color(0.76f, 0.76f, 0.76f, 1f));
-
-            // Scroll content
-            var contentArea = new Rect(r.x, r.y, r.width, r.height);
-            float contentH = _projectTree.MeasureHeight();
-            float panelW = contentArea.width;
-            var contentRect = new Rect(0, 0, panelW - 16, Mathf.Max(contentH, contentArea.height));
-
-            _projectScroll = GUI.BeginScrollView(contentArea, _projectScroll, contentRect);
-            GUILayout.BeginArea(new Rect(0, 0, contentRect.width, Mathf.Max(contentH, 1f)));
-            _projectTree.Draw(contentRect.width, _leftPanelHasFocus);
-            GUILayout.EndArea();
-            GUI.EndScrollView();
-
-            // Keep repainting while a rename is grabbing focus so it paints correctly
-            if (_projectTree.HasPendingRenameFocus) Repaint();
-        }
-
-        void DrawSplitter()
-        {
-            var splitterRect = new Rect(_splitterX, TabHeight, 4, position.height - TabHeight);
-            EditorGUI.DrawRect(splitterRect, new Color(0.1f, 0.1f, 0.1f, 1f));
-            EditorGUIUtility.AddCursorRect(splitterRect, MouseCursor.ResizeHorizontal);
-
-            var ev = Event.current;
-            if (ev.type == EventType.MouseDown && splitterRect.Contains(ev.mousePosition) && ev.button == 0)
-            {
-                _splitterDragging = true;
-                ev.Use();
-            }
-
-            if (_splitterDragging)
-            {
-                if (ev.type == EventType.MouseDrag)
-                {
-                    _splitterX = Mathf.Clamp(ev.mousePosition.x, 100f, position.width - 200f);
-                    _rightX = _splitterX + 4;
-                    _rightW = position.width - _rightX;
-                    ev.Use();
-                    Repaint();
-                }
-                if (ev.type == EventType.MouseUp)
-                {
-                    _splitterDragging = false;
-                    EditorPrefs.SetFloat(SplitterXKey, _splitterX);
-                    ev.Use();
-                }
-            }
-        }
-
         void SyncProjectTreeHighlight()
         {
             if (_projectTree == null) return;
@@ -1312,14 +777,7 @@ namespace BetterTabs
         void ScrollProjectPanelToPath(string path)
         {
             if (!_projectPanelOpen || _projectTree == null) return;
-            float y = _projectTree.GetYPositionOf(path);
-            if (y < 0f) return;
-            float panelH = position.height - TabHeight * 2f;
-            if (y < _projectScroll.y || y + 20f > _projectScroll.y + panelH)
-            {
-                _projectScroll.y = Mathf.Max(0f, y - panelH * 0.35f);
-                Repaint();
-            }
+            _projectTree.ScrollToPath(path);
         }
 
         // ── Folder drag-drop handling ─────────────────────────────────────────
@@ -1330,54 +788,32 @@ namespace BetterTabs
         void HandleDragHover()
         {
             var ev = Event.current;
-            var windowRect = new Rect(0, 0, position.width, position.height);
+            var windowRect = new Rect(0, 0, _viewW, _viewH);
 
             if (ev.type == EventType.DragUpdated)
             {
                 if (windowRect.Contains(ev.mousePosition) && IsDraggingAsset())
                 {
                     DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-                    if (!_isDragHovering) { _isDragHovering = true; Repaint(); }
+                    if (!_isDragHovering) { _isDragHovering = true; _tabBar?.SetDropHint(true); Repaint(); }
                 }
                 else if (_isDragHovering)
                 {
                     _isDragHovering = false;
+                    _tabBar?.SetDropHint(false);
                     Repaint();
                 }
             }
             else if (ev.type == EventType.DragExited)
             {
                 _isDragHovering = false;
+                _tabBar?.SetDropHint(false);
                 Repaint();
             }
         }
 
         // Runs AFTER tree renderers have drawn — if the drop hit the tab bar
         // area (and wasn't consumed elsewhere), create a tab from the payload.
-        void HandleDragPerformFallback()
-        {
-            var ev = Event.current;
-            if (ev.type != EventType.DragPerform) return;
-            var tabBarRect = new Rect(0, 0, position.width, TabHeight);
-            if (!tabBarRect.Contains(ev.mousePosition)) return;
-            if (!IsDraggingAsset()) return;
-
-            DragAndDrop.AcceptDrag();
-            foreach (var path in DragAndDrop.paths)
-                if (!string.IsNullOrEmpty(path))
-                    AddOrSelectTab(path);
-            if (DragAndDrop.objectReferences != null)
-            {
-                foreach (var o in DragAndDrop.objectReferences)
-                {
-                    if (o is GameObject go && !AssetDatabase.Contains(go))
-                        AddOrSelectSceneObjectTab(go);
-                }
-            }
-            _isDragHovering = false;
-            ev.Use();
-            Repaint();
-        }
 
         bool IsDraggingAsset()
         {
@@ -1391,12 +827,6 @@ namespace BetterTabs
             return false;
         }
 
-        void DrawDropOverlay()
-        {
-            var r = new Rect(0, 0, position.width, TabHeight);
-            EditorGUI.DrawRect(r, new Color(0.2f, 0.5f, 1f, 0.15f));
-            DrawBorder(r, new Color(0.3f, 0.6f, 1f, 0.8f), 2f);
-        }
 
         static void DrawBorder(Rect r, Color color, float thickness)
         {
@@ -1470,7 +900,6 @@ namespace BetterTabs
         {
             if (_selectedAssetPath == path)
                 _selectedAssetPath = null;
-            _tree.InvalidateCache();
             Repaint();
         }
 
@@ -1525,152 +954,65 @@ namespace BetterTabs
                 try { PrefabUtility.UnloadPrefabContents(root); } catch { /* ignore */ }
             }
             _loadedPrefabRoots.Remove(prefabPath);
-            DestroyStackedEditors(); // force editor refresh on next draw
+            _goView?.Invalidate();
         }
 
         // ── Stacked component editors ─────────────────────────────────────────
 
-        void RefreshStackedEditors(string key, GameObject target)
-        {
-            if (_stackedEditorsKey == key && _stackedEditors.Count > 0 && _stackedEditors[0] != null)
-                return;
-
-            DestroyStackedEditors();
-            _stackedEditorsKey = key;
-            if (target == null) return;
-
-            const System.Reflection.BindingFlags bf =
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Public;
-            var firstProp = typeof(Editor).GetProperty("firstInspectedEditor", bf);
-            var expandProp = typeof(Editor).GetProperty("alwaysAllowExpansion", bf);
-
-            void MakeVisible(Editor e, bool first)
-            {
-                if (e == null) return;
-                firstProp?.SetValue(e, first);
-                expandProp?.SetValue(e, true);
-                UnityEditorInternal.InternalEditorUtility.SetIsInspectorExpanded(e.target, true);
-            }
-
-            // 1) GameObject header editor
-            var goEditor = Editor.CreateEditor(target);
-            MakeVisible(goEditor, true);
-            _stackedEditors.Add(goEditor);
-
-            // 2) One editor per component
-            var comps = target.GetComponents<Component>();
-            for (int i = 0; i < comps.Length; i++)
-            {
-                if (comps[i] == null) continue; // missing script
-                var ce = Editor.CreateEditor(comps[i]);
-                MakeVisible(ce, false);
-                _stackedEditors.Add(ce);
-            }
-        }
-
-        void DestroyStackedEditors()
-        {
-            foreach (var e in _stackedEditors)
-                if (e != null) DestroyImmediate(e);
-            _stackedEditors.Clear();
-            _stackedEditorsKey = null;
-        }
-
         // ── Inline rename ─────────────────────────────────────────────────────
 
-        void StartRename(string path)
-        {
-            _renamingPath = path;
-            _renameBuffer = Path.GetFileNameWithoutExtension(path);
-            _selectedAssetPath = path;
-            _tree?.RequestRenameFocus();
-            Repaint();
-        }
-
-        void CommitRename(string newName)
-        {
-            if (_renamingPath == null) return;
-            string path = _renamingPath;
-            _renamingPath = null;
-            _renameBuffer = null;
-            _tree.ResetRenameState();
-
-            string trimmed = newName.Trim();
-            string oldName = Path.GetFileNameWithoutExtension(path);
-            if (!string.IsNullOrEmpty(trimmed) && trimmed != oldName)
-            {
-                string err = AssetDatabase.RenameAsset(path, trimmed);
-                if (!string.IsNullOrEmpty(err))
-                    Debug.LogError($"BetterTabs: Rename failed — {err}");
-                AssetDatabase.Refresh();
-                _tree.InvalidateCache();
-            }
-            Repaint();
-        }
-
-        void CancelRename()
-        {
-            _renamingPath = null;
-            _renameBuffer = null;
-            _tree.ResetRenameState();
-            Repaint();
-        }
-
         // ── Keyboard shortcuts & scroll navigation ────────────────────────────
-        void HandleKeyboardShortcuts()
+        // Window-level shortcuts. These used to live in the IMGUI panels, but the
+        // left pane is no longer IMGUI and the right one is hidden in tree mode.
+        // Registered with the ShortcutManager and scoped to this window: matching
+        // Ctrl+letter combos on KeyDownEvent is unreliable (the key code and the
+        // character arrive on separate events).
+        [Shortcut("BetterTabs/Close Active Tab", typeof(BetterTabsWindow), KeyCode.W, ShortcutModifiers.Action)]
+        static void CloseActiveTabShortcut(ShortcutArguments args)
         {
-            var ev = Event.current;
+            if (args.context is BetterTabsWindow w && w._selectedIndex >= 0)
+                w.RemoveTab(w._selectedIndex);
+        }
 
-            // Shift+Scroll → cycle tabs   |   Ctrl+Shift+Scroll → move tab
-            if (ev.type == EventType.ScrollWheel && ev.shift && _tabs.Count > 1)
+        [Shortcut("BetterTabs/Reopen Closed Tab", typeof(BetterTabsWindow), KeyCode.T,
+            ShortcutModifiers.Action | ShortcutModifiers.Shift)]
+        static void ReopenClosedTabShortcut(ShortcutArguments args)
+        {
+            if (args.context is BetterTabsWindow w) w.ReopenClosedTab();
+        }
+
+        void OnRootWheel(WheelEvent evt)
+        {
+            if (!evt.shiftKey || _tabs.Count <= 1) return;
+
+            // On Windows, Shift+Scroll arrives as horizontal delta.
+            float raw = Mathf.Abs(evt.delta.y) > 0.01f ? evt.delta.y : evt.delta.x;
+            int dir = raw > 0 ? -1 : 1;
+            if (BetterTabsSettings.InvertScroll) dir = -dir;
+
+            if (evt.ctrlKey || evt.commandKey) MoveTab(_selectedIndex, dir);
+            else
             {
-                // On Windows, Shift+Scroll arrives as horizontal scroll (delta.y=0, delta.x!=0).
-                float rawScroll = Mathf.Abs(ev.delta.y) > 0.01f ? ev.delta.y : ev.delta.x;
-                int dir = rawScroll > 0 ? -1 : 1;
-                if (BetterTabsSettings.InvertScroll) dir = -dir;
-                if (ev.control || ev.command)
-                {
-                    MoveTab(_selectedIndex, dir);
-                }
-                else
-                {
-                    int next = (_selectedIndex + dir + _tabs.Count) % _tabs.Count;
-                    if (next != _selectedIndex) SelectTab(next);
-                }
-                ev.Use();
-                return;
-            }
-
-            if (ev.type != EventType.KeyDown) return;
-            bool ctrl = ev.control || ev.command;
-
-            // Shift+Left/Right → cycle between anchored tabs
-            if (ev.shift && !ctrl && _tabs.Count > 1
-                && (ev.keyCode == KeyCode.LeftArrow || ev.keyCode == KeyCode.RightArrow))
-            {
-                int dir = ev.keyCode == KeyCode.RightArrow ? 1 : -1;
                 int next = (_selectedIndex + dir + _tabs.Count) % _tabs.Count;
                 if (next != _selectedIndex) SelectTab(next);
-                ev.Use();
+            }
+            evt.StopPropagation();
+        }
+
+        void OnRootKeyDown(KeyDownEvent evt)
+        {
+            bool ctrl = evt.ctrlKey || evt.commandKey;
+
+            if (evt.shiftKey && !ctrl && _tabs.Count > 1
+                && (evt.keyCode == KeyCode.LeftArrow || evt.keyCode == KeyCode.RightArrow))
+            {
+                int dir = evt.keyCode == KeyCode.RightArrow ? 1 : -1;
+                int next = (_selectedIndex + dir + _tabs.Count) % _tabs.Count;
+                if (next != _selectedIndex) SelectTab(next);
+                evt.StopPropagation();
                 return;
             }
 
-            // Ctrl+W → close active tab
-            if (ctrl && !ev.shift && ev.keyCode == KeyCode.W && _selectedIndex >= 0)
-            {
-                RemoveTab(_selectedIndex);
-                ev.Use();
-                return;
-            }
-
-            // Ctrl+Shift+T → reopen last closed tab
-            if (ctrl && ev.shift && ev.keyCode == KeyCode.T)
-            {
-                ReopenClosedTab();
-                ev.Use();
-            }
         }
 
         void OpenNewTab()
@@ -1703,7 +1045,7 @@ namespace BetterTabs
         {
             while (_closedTabStack.Count > 0)
             {
-                var entry = _closedTabStack.Pop();
+                (BetterTabEntry entry, int originalIndex) = _closedTabStack.Pop();
                 if (entry == null) continue;
 
                 // Skip if already open.
@@ -1720,9 +1062,11 @@ namespace BetterTabs
                 }
                 if (alreadyOpen) continue;
 
-                // Re-insert the original entry (preserves expanded paths, search, selection).
-                _tabs.Add(entry);
-                SelectTab(_tabs.Count - 1);
+                // Re-insert the original entry (preserves expanded paths, search,
+                // selection) back at the position it was closed from.
+                int insertAt = Mathf.Clamp(originalIndex, 0, _tabs.Count);
+                _tabs.Insert(insertAt, entry);
+                SelectTab(insertAt);
                 BetterTabsPrefs.Save(_tabs, _selectedIndex);
                 return;
             }
@@ -1733,8 +1077,13 @@ namespace BetterTabs
             if (index < 0 || index >= _tabs.Count || _tabs.Count <= 1) return;
             // Wrap-around so both scroll directions always produce movement.
             int target = (index + direction + _tabs.Count) % _tabs.Count;
-            SwapTabs(index, target);
+
+            (_tabs[index], _tabs[target]) = (_tabs[target], _tabs[index]);
+            if (_selectedIndex == index) _selectedIndex = target;
+            else if (_selectedIndex == target) _selectedIndex = index;
+
             BetterTabsPrefs.Save(_tabs, _selectedIndex);
+            RefreshTabBar();
             Repaint();
         }
 
@@ -1769,12 +1118,8 @@ namespace BetterTabs
         {
             PersistActiveTabState();
             _selectedIndex = index;
-            _scrollToSelected = true;
             _selectedAssetPath = null;
-            _renamingPath = null;
-            _renameBuffer = null;
             _assetScroll = Vector2.zero;
-            _tree.InvalidateCache();
 
             var tab = _tabs[index];
             if (tab.kind == BetterTabKind.SceneObject)
@@ -1793,6 +1138,8 @@ namespace BetterTabs
 
             RestoreActiveTabState();
             SyncProjectTreeHighlight();
+            RefreshTabBar();
+            _tabBar?.ScrollToSelected();
             Repaint();
             BetterTabsPrefs.Save(_tabs, _selectedIndex);
         }
@@ -1812,22 +1159,21 @@ namespace BetterTabs
                 }
                 if (!stillReferenced) SaveAndUnloadPrefab(removed.path);
             }
-            _closedTabStack.Push(removed);
+            _closedTabStack.Push((removed, index));
             _tabs.RemoveAt(index);
             if (_tabs.Count == 0)
             {
                 _selectedIndex = -1;
                 _search.Clear();
                 _searchInputText = "";
-                _tree.InvalidateCache();
             }
             else
             {
                 _selectedIndex = Mathf.Clamp(_selectedIndex, 0, _tabs.Count - 1);
-                _tree.InvalidateCache();
                 RestoreActiveTabState();
             }
             BetterTabsPrefs.Save(_tabs, _selectedIndex);
+            RefreshTabBar();
             Repaint();
         }
 
@@ -1864,7 +1210,7 @@ namespace BetterTabs
         {
             if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
             var tab = _tabs[_selectedIndex];
-            _tree.SaveExpandedState(tab.expandedPaths);
+            _contentTree?.SaveExpandedState(tab.expandedPaths);
             tab.searchQuery = _search.CommittedQuery;
         }
 
@@ -1876,7 +1222,7 @@ namespace BetterTabs
             if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
             var tab = _tabs[_selectedIndex];
 
-            _tree.LoadExpandedState(tab.expandedPaths);
+            _contentTree?.LoadExpandedState(tab.expandedPaths);
 
             if (!string.IsNullOrEmpty(tab.searchQuery))
             {
@@ -1889,7 +1235,7 @@ namespace BetterTabs
         {
             if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count)
             {
-                _tree.SaveExpandedState(_tabs[_selectedIndex].expandedPaths);
+                _contentTree?.SaveExpandedState(_tabs[_selectedIndex].expandedPaths);
                 BetterTabsPrefs.Save(_tabs, _selectedIndex);
             }
         }
@@ -1922,7 +1268,7 @@ namespace BetterTabs
             return _tabs[_selectedIndex].kind == BetterTabKind.Folder;
         }
 
-        static Texture2D GetTabIcon(BetterTabEntry tab)
+        internal static Texture2D GetTabIconFor(BetterTabEntry tab)
         {
             if (tab.kind == BetterTabKind.SceneObject)
                 return EditorGUIUtility.IconContent("GameObject Icon").image as Texture2D;
