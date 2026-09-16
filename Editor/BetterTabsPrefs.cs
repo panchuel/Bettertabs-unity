@@ -17,12 +17,16 @@ namespace BetterTabs
 
             foreach (var tab in tabs)
             {
-                state.tabPaths.Add(tab.path);
                 state.snapshots.Add(new BetterTabSnapshot
                 {
-                    folderPath = tab.path,
+                    kind = tab.kind,
+                    path = tab.path,
+                    globalObjectId = tab.globalObjectId,
+                    name = tab.name,
                     expandedPaths = new List<string>(tab.expandedPaths),
-                    searchQuery = tab.searchQuery ?? ""
+                    searchQuery = tab.searchQuery ?? "",
+                    hierarchySelectionPath = tab.hierarchySelectionPath ?? "",
+                    hierarchySplitterX = tab.hierarchySplitterX
                 });
             }
 
@@ -42,31 +46,41 @@ namespace BetterTabs
                 return false;
 
             var state = JsonUtility.FromJson<BetterTabsState>(json);
-            if (state == null)
+            if (state == null || state.snapshots == null)
                 return false;
 
-            var snapMap = new System.Collections.Generic.Dictionary<string, BetterTabSnapshot>();
-            if (state.snapshots != null)
-                foreach (var snap in state.snapshots)
-                    if (snap != null && snap.folderPath != null)
-                        snapMap[snap.folderPath] = snap;
-
-            foreach (var tabPath in state.tabPaths)
+            foreach (var snap in state.snapshots)
             {
-                if (string.IsNullOrEmpty(tabPath))
-                    continue;
-                // Skip if the asset no longer exists (deleted or moved outside Unity).
-                if (!AssetDatabase.IsValidFolder(tabPath) &&
-                    AssetDatabase.AssetPathToGUID(tabPath) == "")
-                    continue;
+                if (snap == null) continue;
 
-                var entry = new BetterTabEntry(tabPath);
+                BetterTabEntry entry;
 
-                if (snapMap.TryGetValue(tabPath, out var snap))
+                if (snap.kind == BetterTabKind.SceneObject)
                 {
-                    entry.expandedPaths = snap.expandedPaths ?? new List<string>();
-                    entry.searchQuery = snap.searchQuery ?? "";
+                    if (string.IsNullOrEmpty(snap.globalObjectId)) continue;
+                    entry = new BetterTabEntry
+                    {
+                        kind = BetterTabKind.SceneObject,
+                        globalObjectId = snap.globalObjectId,
+                        name = snap.name ?? "GameObject"
+                    };
                 }
+                else
+                {
+                    if (string.IsNullOrEmpty(snap.path)) continue;
+                    // Skip assets that no longer exist.
+                    if (!AssetDatabase.IsValidFolder(snap.path)
+                        && AssetDatabase.AssetPathToGUID(snap.path) == "")
+                        continue;
+
+                    entry = new BetterTabEntry(snap.path);
+                }
+
+                entry.expandedPaths = snap.expandedPaths ?? new List<string>();
+                entry.searchQuery = snap.searchQuery ?? "";
+                entry.hierarchySelectionPath = snap.hierarchySelectionPath ?? "";
+                if (snap.hierarchySplitterX > 0f)
+                    entry.hierarchySplitterX = snap.hierarchySplitterX;
 
                 tabs.Add(entry);
             }

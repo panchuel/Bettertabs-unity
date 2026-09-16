@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -56,6 +57,40 @@ namespace BetterTabs
             return true;
         }
 
+        public static bool DeleteMultiple(ICollection<string> paths)
+        {
+            if (paths == null || paths.Count == 0) return false;
+
+            string message;
+            if (paths.Count == 1)
+            {
+                string name = Path.GetFileNameWithoutExtension(GetFirst(paths));
+                message = $"Are you sure you want to delete '{name}'?\nThis cannot be undone.";
+            }
+            else
+            {
+                message = $"Are you sure you want to delete these {paths.Count} items?\nThis cannot be undone.";
+            }
+
+            bool confirmed = EditorUtility.DisplayDialog("Delete Assets", message, "Delete", "Cancel");
+            if (!confirmed) return false;
+
+            foreach (string path in paths)
+            {
+                if (!string.IsNullOrEmpty(path))
+                    AssetDatabase.DeleteAsset(path);
+            }
+            AssetDatabase.Refresh();
+            return true;
+        }
+
+        static string GetFirst(ICollection<string> paths)
+        {
+            foreach (string p in paths)
+                return p;
+            return null;
+        }
+
         public static void SelectDependencies(string path)
         {
             var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
@@ -93,12 +128,72 @@ namespace BetterTabs
                     : fullPath;
 
                 string capturedPath = fullPath;
-                menu.AddItem(new GUIContent(displayPath), false, () =>
+                string capturedFolder = targetFolder;
+
+                // Special handling for "Folder"
+                if (displayPath == "Folder")
                 {
-                    if (folderObj != null) Selection.activeObject = folderObj;
-                    EditorApplication.ExecuteMenuItem(capturedPath);
-                    onRefresh?.Invoke();
-                });
+                    menu.AddItem(new GUIContent(displayPath), false, () =>
+                    {
+                        string newFolderPath = AssetDatabase.GenerateUniqueAssetPath($"{targetFolder}/NewFolder");
+                        string folderName = Path.GetFileName(newFolderPath);
+                        AssetDatabase.CreateFolder(targetFolder, folderName);
+                        AssetDatabase.Refresh();
+                        onRefresh?.Invoke();
+                        // Small delay to ensure refresh is processed
+                        EditorApplication.delayCall += () => onRenameRequested?.Invoke(newFolderPath);
+                    });
+                }
+                else
+                {
+                    menu.AddItem(new GUIContent(displayPath), false, () =>
+                    {
+                        // Store initial assets in root to detect new asset
+                        var beforeGuids = AssetDatabase.FindAssets("", new string[] { "Assets" });
+                        var beforeSet = new System.Collections.Generic.HashSet<string>(beforeGuids);
+
+                        // Delay to ensure menu is closed
+                        EditorApplication.delayCall += () =>
+                        {
+                            // Ensure folder is selected before creating
+                            if (folderObj != null)
+                                Selection.activeObject = folderObj;
+
+                            EditorApplication.ExecuteMenuItem(capturedPath);
+
+                            // Delay again to let asset be created
+                            EditorApplication.delayCall += () =>
+                            {
+                                // Find newly created asset
+                                var afterGuids = AssetDatabase.FindAssets("", new string[] { "Assets" });
+                                foreach (var guid in afterGuids)
+                                {
+                                    if (!beforeSet.Contains(guid))
+                                    {
+                                        string newAssetPath = AssetDatabase.GUIDToAssetPath(guid);
+                                        string parent = Path.GetDirectoryName(newAssetPath)?.Replace('\\', '/');
+
+                                        // If created in wrong folder, move it
+                                        if (parent != targetFolder && !string.IsNullOrEmpty(targetFolder) && targetFolder != "Assets")
+                                        {
+                                            string fileName = Path.GetFileName(newAssetPath);
+                                            string destPath = $"{targetFolder}/{fileName}";
+                                            string err = AssetDatabase.MoveAsset(newAssetPath, destPath);
+                                            if (string.IsNullOrEmpty(err))
+                                                newAssetPath = destPath;
+                                        }
+
+                                        // First refresh to see the new asset in tree
+                                        onRefresh?.Invoke();
+                                        // Then start renaming with a small delay for scroll to work
+                                        EditorApplication.delayCall += () => onRenameRequested?.Invoke(newAssetPath);
+                                        break;
+                                    }
+                                }
+                            };
+                        };
+                    });
+                }
             }
         }
 
