@@ -1,0 +1,361 @@
+/* Tab bar ------------------------------------------------------------------ */
+.bt-tabbar {
+    flex-direction: row;
+    height: 22px;
+    background-color: var(--unity-colors-toolbar-background);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-toolbar-border);
+}
+
+.bt-tabbar__scroll {
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow: hidden;
+}
+
+.bt-tabbar__row {
+    flex-direction: row;
+    height: 22px;
+}
+
+/* Individual tab ----------------------------------------------------------- */
+.bt-tab {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    min-width: 80px;
+    max-width: 180px;
+    height: 22px;
+    padding-left: 4px;
+    padding-right: 2px;
+    border-right-width: 1px;
+    border-right-color: rgba(0, 0, 0, 0.25);
+}
+
+.bt-tab:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Tabs slide to the slot they are pushed into while another one is dragged. */
+.bt-tab {
+    transition-property: translate;
+    transition-duration: 0.12s;
+    transition-timing-function: ease-out;
+}
+
+/* Suppressed for the dragged tab (must track the cursor) and when settling. */
+.bt-tab--notransition {
+    transition-duration: 0s;
+}
+
+.bt-tab--active {
+    background-color: rgba(64, 120, 191, 0.5);
+}
+
+/* Needed: .bt-tab:hover outweighs .bt-tab--active on specificity alone, so the
+   active tab would turn grey on hover without this rule. */
+.bt-tab--active:hover {
+    background-color: rgba(74, 134, 207, 0.65);
+}
+
+.bt-tab--dragging {
+    background-color: rgb(51, 115, 204);
+    border-left-width: 1px;
+    border-left-color: rgba(0, 0, 0, 0.5);
+    border-right-color: rgba(0, 0, 0, 0.5);
+}
+
+.bt-tab--dragging .bt-tab__label {
+    color: rgb(255, 255, 255);
+}
+
+.bt-tab__icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.bt-tab__label {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 3px;
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+}
+
+.bt-tab--active .bt-tab__label {
+    -unity-font-style: bold;
+}
+
+.bt-tab__close {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    font-size: 11px;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-tab__close:hover {
+    background-color: rgba(255, 255, 255, 0.22);
+}
+
+/* Toolbar buttons ---------------------------------------------------------- */
+.bt-tabbar__btn {
+    flex-shrink: 0;
+    height: 20px;
+    min-width: 22px;
+    margin: 1px 0 1px 0;
+    padding: 0 3px 0 3px;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-tabbar__btn:hover:enabled {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.bt-tabbar__btn:disabled {
+    opacity: 0.4;
+}
+
+.bt-tabbar__arrow {
+    width: 16px;
+    min-width: 16px;
+}
+
+/* Drop hint when dragging assets over the bar ------------------------------ */
+.bt-tabbar--drophint {
+    background-color: rgba(51, 128, 255, 0.15);
+    border-width: 2px;
+    border-color: rgba(77, 153, 255, 0.8);
+}
+
+/* Project tree rows -------------------------------------------------------- */
+.bt-row {
+    flex-direction: row;
+    align-items: center;
+    height: 18px;
+    flex-grow: 1;
+}
+
+.bt-row__icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.bt-row__label {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 3px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+}
+
+.bt-row__field {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 3px;
+    margin-right: 2px;
+}
+
+.bt-row--highlighted {
+    background-color: rgba(64, 120, 191, 0.30);
+}
+
+.bt-row__add {
+    width: 18px;
+    height: 16px;
+    flex-shrink: 0;
+    margin: 0 2px 0 0;
+    padding: 0;
+    border-width: 0;
+    font-size: 12px;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-row__add:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.bt-row__type {
+    flex-shrink: 0;
+    width: 96px;
+    margin-right: 4px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.45);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-right;
+}
+
+/* Embedded inspector ------------------------------------------------------- */
+.bt-inspector__toolbar {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+    flex-shrink: 0;
+    background-color: var(--unity-colors-toolbar-background);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-toolbar-border);
+    padding-left: 4px;
+}
+
+.bt-inspector__icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.bt-inspector__title {
+    flex-grow: 1;
+    margin-left: 5px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bt-inspector__open {
+    flex-shrink: 0;
+    height: 18px;
+    margin: 0 2px 0 0;
+    padding: 0 8px 0 8px;
+    font-size: 10px;
+}
+
+.bt-inspector__empty {
+    margin-top: 12px;
+    -unity-text-align: middle-center;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* Preview block ------------------------------------------------------------ */
+.bt-preview {
+    flex-shrink: 0;
+    border-top-width: 1px;
+    border-top-color: rgba(0, 0, 0, 0.4);
+}
+
+.bt-preview__header {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    flex-shrink: 0;
+    background-color: var(--unity-colors-toolbar-background);
+    cursor: resize-vertical;
+}
+
+.bt-preview__title {
+    flex-grow: 1;
+    margin-left: 6px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bt-preview__settings {
+    flex-shrink: 0;
+    width: 160px;
+    height: 18px;
+}
+
+/* Flat asset list (grid view + search results) ----------------------------- */
+.bt-list__header {
+    flex-shrink: 0;
+    padding: 3px 6px 3px 6px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.bt-list__items--list {
+    flex-direction: column;
+}
+
+.bt-list__items--grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+}
+
+.bt-item {
+    align-items: center;
+}
+
+.bt-item--row {
+    flex-direction: row;
+    height: 20px;
+    padding-left: 2px;
+}
+
+.bt-item--odd {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.bt-item--grid {
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 78px;
+    height: 78px;
+    padding: 4px;
+}
+
+.bt-item--selected {
+    background-color: rgb(43, 92, 135);
+}
+
+.bt-item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.bt-item--selected:hover {
+    background-color: rgb(52, 108, 156);
+}
+
+.bt-item__icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.bt-item__preview {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+}
+
+.bt-item__label {
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bt-item--row .bt-item__label {
+    flex-grow: 1;
+    margin-left: 4px;
+    -unity-text-align: middle-left;
+}
+
+.bt-item--grid .bt-item__label {
+    width: 70px;
+    margin-top: 2px;
+    -unity-text-align: upper-center;
+}
+
+.bt-item--selected .bt-item__label {
+    color: rgb(255, 255, 255);
+}
