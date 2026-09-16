@@ -1,27 +1,28 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
-using UnityEngine;
 
 namespace BetterTabs
 {
+    // Project-wide asset search. Queries run against the whole project rather than
+    // the active tab folder, so results are the same wherever the search starts.
     internal class BetterSearchHandler
     {
         const double DebounceSeconds = 0.2;
+        const int MaxResults = 500;
 
         string _committedQuery = "";
         string _pendingQuery = "";
         double _lastChangeTime = -1;
 
-        List<string> _results = new List<string>();
-        string _searchedRootPath = null;
+        readonly List<string> _results = new List<string>();
 
         public bool IsSearching => !string.IsNullOrEmpty(_committedQuery);
         public string CommittedQuery => _committedQuery;
         public IReadOnlyList<string> Results => _results;
         public int ResultCount => _results.Count;
 
-        public bool Tick(string currentQuery, string rootPath)
+        public bool Tick(string currentQuery)
         {
             if (currentQuery != _pendingQuery)
             {
@@ -29,33 +30,22 @@ namespace BetterTabs
                 _lastChangeTime = EditorApplication.timeSinceStartup;
             }
 
-            if (_pendingQuery != _committedQuery)
-            {
-                double elapsed = EditorApplication.timeSinceStartup - _lastChangeTime;
-                if (elapsed >= DebounceSeconds)
-                {
-                    _committedQuery = _pendingQuery;
-                    RefreshResults(rootPath);
-                    return true;
-                }
+            if (_pendingQuery == _committedQuery) return false;
+
+            if (EditorApplication.timeSinceStartup - _lastChangeTime < DebounceSeconds)
                 return false;
-            }
 
-            if (_committedQuery != "" && rootPath != _searchedRootPath)
-            {
-                RefreshResults(rootPath);
-                return true;
-            }
-
-            return false;
+            _committedQuery = _pendingQuery;
+            RefreshResults();
+            return true;
         }
 
-        public void ForceCommit(string query, string rootPath)
+        public void ForceCommit(string query)
         {
             _pendingQuery = query;
             _committedQuery = query;
             _lastChangeTime = -1;
-            RefreshResults(rootPath);
+            RefreshResults();
         }
 
         public void Clear()
@@ -64,37 +54,32 @@ namespace BetterTabs
             _committedQuery = "";
             _lastChangeTime = -1;
             _results.Clear();
-            _searchedRootPath = null;
         }
 
-        void RefreshResults(string rootPath)
+        void RefreshResults()
         {
             _results.Clear();
-            _searchedRootPath = rootPath;
+            if (string.IsNullOrEmpty(_committedQuery)) return;
 
-            if (string.IsNullOrEmpty(_committedQuery) || string.IsNullOrEmpty(rootPath))
-                return;
-
-            var lower = _committedQuery.ToLower();
-            var guids = AssetDatabase.FindAssets("", new string[] { rootPath });
-            foreach (var guid in guids)
+            // Passed straight to AssetDatabase so the query behaves exactly like the
+            // Project window search, including its filter syntax (t:Material, l:label,
+            // partial names). Post-filtering here would break those filters.
+            foreach (string guid in AssetDatabase.FindAssets(_committedQuery))
             {
-                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                if (AssetDatabase.IsValidFolder(assetPath)) continue;
-                var fileName = Path.GetFileNameWithoutExtension(assetPath);
-                if (fileName.ToLower().Contains(lower))
-                    _results.Add(assetPath);
+                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                if (string.IsNullOrEmpty(assetPath)) continue;
+
+                _results.Add(assetPath);
+                if (_results.Count >= MaxResults) break;
             }
         }
 
         public string Highlight(string assetPath)
         {
-            var name = Path.GetFileNameWithoutExtension(assetPath);
+            string name = Path.GetFileNameWithoutExtension(assetPath);
             if (string.IsNullOrEmpty(_committedQuery)) return name;
 
-            var lower = name.ToLower();
-            var queryLower = _committedQuery.ToLower();
-            int idx = lower.IndexOf(queryLower);
+            int idx = name.ToLower().IndexOf(_committedQuery.ToLower());
             if (idx < 0) return name;
 
             return name.Substring(0, idx)

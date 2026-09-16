@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.Search;
 using UnityEditor.ShortcutManagement;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -69,10 +70,10 @@ namespace BetterTabs
         // ── UI Toolkit ────────────────────────────────────────────────────────
         BetterTabsBarView _tabBar;
         IMGUIContainer _rightContainer;
-        IMGUIContainer _searchToolbar;
         BetterAssetTreeView _contentTree;
         BetterAssetInspectorView _assetInspector;
         BetterAssetListView _assetList;
+        string _assetListKey;
         BetterGameObjectView _goView;
         VisualElement _rightPane;
         int _rightPaneMode = -1;
@@ -203,6 +204,8 @@ namespace BetterTabs
                 s_dirty = false;
                 _projectTree?.Rebuild();
                 _contentTree?.Rebuild();
+                // Force the flat list to rebuild too: its contents just changed.
+                _assetListKey = null;
                 Repaint();
             }
 
@@ -258,6 +261,13 @@ namespace BetterTabs
             _tabBar.AddClicked += AddTabFromSelection;
             _tabBar.PingClicked += () => PingTab(_selectedIndex);
             _tabBar.PanelToggleClicked += ToggleProjectPanel;
+            _tabBar.SearchChanged += OnSearchChanged;
+            _tabBar.UnitySearchClicked += OpenUnitySearchWindow;
+            _tabBar.ViewToggleClicked += () =>
+            {
+                _gridView = !_gridView;
+                UpdateTabBarButtons();
+            };
             // Dropping assets on the bar creates tabs (was IMGUI DragPerform before).
             _tabBar.RegisterCallback<DragUpdatedEvent>(OnTabBarDragUpdated);
             _tabBar.RegisterCallback<DragPerformEvent>(OnTabBarDragPerform);
@@ -283,11 +293,6 @@ namespace BetterTabs
             _rightPane = new VisualElement();
             _rightPane.style.flexGrow = 1;
             _rightPane.style.minWidth = MinPanelW;
-
-            _searchToolbar = new IMGUIContainer(DrawSearchToolbarIMGUI);
-            _searchToolbar.style.height = TabHeight;
-            _searchToolbar.style.flexShrink = 0;
-            _rightPane.Add(_searchToolbar);
 
             _contentTree = new BetterAssetTreeView(multiSelect: false, showTypeColumn: true, showAddButton: false);
             _contentTree.ItemSelected += OnAssetSelected;
@@ -367,20 +372,25 @@ namespace BetterTabs
 
         // The search toolbar lives in its own strip so the tree below it can be a
         // real VisualElement rather than IMGUI.
-        void DrawSearchToolbarIMGUI()
-        {
-            UpdateViewSize(_searchToolbar);
-            _rightX = 0f;
-            _rightW = _viewW;
-            if (_tabs.Count > 0 && ActiveTabIsFolder()) DrawSearchToolbar();
-        }
-
         // Chooses between the native tree and the IMGUI views, and keeps the tree
         // pointed at the active tab folder.
         // Feeds the flat list with either search hits or the folder contents.
         void RefreshAssetList(bool searching)
         {
             if (_assetList == null) return;
+
+            // This runs on every editor tick, and a rebuild re-requests an asset
+            // preview for every item, so only rebuild when the contents change.
+            string key = searching
+                ? "search:" + _search.CommittedQuery
+                : "folder:" + ActiveTabPath();
+
+            if (key == _assetListKey)
+            {
+                _assetList.SetSelected(_selectedAssetPath);
+                return;
+            }
+            _assetListKey = key;
 
             if (searching)
             {
@@ -432,6 +442,28 @@ namespace BetterTabs
             UpdateRightPaneMode();
             _contentTree?.ExpandToPath(path);
             _contentTree?.StartRename(path);
+        }
+
+        // Embedded Unity Search takes over the right panel, so the active tab is
+        // deselected while it is showing.
+        // Opens Unity's Search window. Embedding it was tried and reverted: SearchWindow
+        // assumes it lives in a real window host, so the embedded copy needed a growing
+        // stack of workarounds against internal APIs.
+        void OpenUnitySearchWindow()
+        {
+            SearchService.ShowContextual();
+        }
+
+        // Search is project-wide, so it is window state rather than tab state.
+        void OnSearchChanged(string query)
+        {
+            _searchInputText = query ?? "";
+            if (string.IsNullOrEmpty(_searchInputText)) _search.Clear();
+            else _search.ForceCommit(_searchInputText);
+
+            RefreshTabBar();
+            UpdateRightPaneMode();
+            Repaint();
         }
 
         // Built on demand: TwoPaneSplitView initialises from its first resolved
@@ -498,20 +530,28 @@ namespace BetterTabs
         {
             if (_contentTree == null) return;
 
-            bool isFolder = _tabs.Count > 0 && ActiveTabIsFolder();
-            bool treeMode = isFolder && !_search.IsSearching && !_gridView;
-            bool assetMode = _tabs.Count > 0 && _selectedIndex >= 0
-                && _tabs[_selectedIndex].kind == BetterTabKind.Asset;
+            // Search takes the whole panel: while it is active no tab renders, so
+            // every other mode is forced off. They are mutually exclusive on purpose,
+            // otherwise the tab content and the results would both be visible.
+            bool searchMode = _search.IsSearching;
 
-            bool searchMode = isFolder && _search.IsSearching;
-            bool gridMode = isFolder && !_search.IsSearching && _gridView;
+            bool hasTab = !searchMode && _tabs.Count > 0 && _selectedIndex >= 0;
+            bool isFolder = hasTab && ActiveTabIsFolder();
+
+            bool treeMode = isFolder && !_gridView;
+            bool gridMode = isFolder && _gridView;
             bool listMode = searchMode || gridMode;
 
-            bool goMode = _tabs.Count > 0 && _selectedIndex >= 0
+            bool assetMode = hasTab && _tabs[_selectedIndex].kind == BetterTabKind.Asset;
+            bool goMode = hasTab
                 && (_tabs[_selectedIndex].kind == BetterTabKind.Prefab
                     || _tabs[_selectedIndex].kind == BetterTabKind.SceneObject);
 
-            int mode = goMode ? GoPaneMode : (assetMode ? 2 : (treeMode ? 1 : (listMode ? 3 : 0)));
+            int mode = searchMode ? 3
+                : goMode ? GoPaneMode
+                : assetMode ? 2
+                : treeMode ? 1
+                : listMode ? 3 : 0;
 
             if (treeMode) _contentTree.SetRoot(ActiveTabPath());
             if (assetMode) _assetInspector.SetAsset(ActiveTabPath());
@@ -527,11 +567,13 @@ namespace BetterTabs
             // Leaving this mode: the split view loses its width while hidden, so
             // capture it before it goes away.
             if (_rightPaneMode == GoPaneMode && _goView != null)
+            {
                 EditorPrefs.SetFloat(HierarchySplitterKey, _goView.CurrentSplitterX());
+                _goView.Invalidate();
+            }
 
             _rightPaneMode = mode;
 
-            _searchToolbar.style.height = isFolder ? TabHeight : 0f;
             _contentTree.style.display = treeMode ? DisplayStyle.Flex : DisplayStyle.None;
             _assetInspector.style.display = assetMode ? DisplayStyle.Flex : DisplayStyle.None;
             _assetList.style.display = listMode ? DisplayStyle.Flex : DisplayStyle.None;
@@ -542,7 +584,8 @@ namespace BetterTabs
                     _goView.RestoreSplitter(EditorPrefs.GetFloat(HierarchySplitterKey, 220f));
             }
             _rightContainer.style.display =
-                (treeMode || assetMode || listMode || goMode) ? DisplayStyle.None : DisplayStyle.Flex;
+                (treeMode || assetMode || listMode || goMode)
+                    ? DisplayStyle.None : DisplayStyle.Flex;
         }
 
         void DrawRightPanelIMGUI()
@@ -625,7 +668,8 @@ namespace BetterTabs
         void RefreshTabBar()
         {
             if (_tabBar == null) return;
-            _tabBar.SetTabs(_tabs, _selectedIndex);
+            // No tab owns the panel during a search, so none is drawn as active.
+            _tabBar.SetTabs(_tabs, _search.IsSearching ? -1 : _selectedIndex);
             UpdateTabBarButtons();
         }
 
@@ -635,7 +679,10 @@ namespace BetterTabs
             bool showPing = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
                 && (_tabs[_selectedIndex].kind == BetterTabKind.SceneObject
                     || _tabs[_selectedIndex].kind == BetterTabKind.Prefab);
-            _tabBar.SetButtonState(CanAddSelection(), showPing, _projectPanelOpen);
+            // The view toggle only applies to folder tabs that are not showing search.
+            bool showView = _tabs.Count > 0 && ActiveTabIsFolder() && !_search.IsSearching;
+            _tabBar.SetButtonState(CanAddSelection(), showPing, _projectPanelOpen,
+                showView, _gridView);
         }
 
         bool CanAddSelection()
@@ -705,51 +752,6 @@ namespace BetterTabs
         }
 
         // ── Search toolbar ────────────────────────────────────────────────────
-        void DrawSearchToolbar()
-        {
-            float y = 0f;
-            var toolbarRect = new Rect(_rightX, y, _rightW, TabHeight);
-            GUI.Box(toolbarRect, GUIContent.none, EditorStyles.toolbar);
-
-            float clearBtnW = _searchInputText.Length > 0 ? 20 : 0;
-            float viewBtnW = 26;
-            float fieldW = _rightW - clearBtnW - viewBtnW - 6;
-
-            var searchRect = new Rect(_rightX + 2, y + 2, fieldW, TabHeight - 4);
-
-            EditorGUI.BeginChangeCheck();
-            _searchInputText = EditorGUI.TextField(searchRect, _searchInputText, EditorStyles.toolbarSearchField);
-            if (EditorGUI.EndChangeCheck())
-            {
-                bool changed = _search.Tick(_searchInputText, ActiveTabPath());
-                if (changed) SyncSearchToTab();
-            }
-            else
-            {
-                bool changed = _search.Tick(_searchInputText, ActiveTabPath());
-                if (changed) SyncSearchToTab();
-            }
-
-            if (clearBtnW > 0)
-            {
-                var clearRect = new Rect(_rightX + 2 + fieldW, y + 2, clearBtnW - 2, TabHeight - 4);
-                if (GUI.Button(clearRect, "×", EditorStyles.toolbarButton))
-                    ClearSearch();
-            }
-
-            var toggleRect = new Rect(_rightX + _rightW - viewBtnW - 2, y + 1, viewBtnW, TabHeight - 2);
-            var viewIcon = _gridView
-                ? EditorGUIUtility.FindTexture("UnityEditor.SceneView")
-                : EditorGUIUtility.FindTexture("d_GridLayoutGroup Icon");
-
-            var viewContent = viewIcon != null
-                ? new GUIContent(viewIcon, _gridView ? "List view" : "Grid view")
-                : new GUIContent(_gridView ? "≡" : "⊞", _gridView ? "List view" : "Grid view");
-
-            if (GUI.Button(toggleRect, viewContent, EditorStyles.toolbarButton))
-                _gridView = !_gridView;
-        }
-
         // ── Content area ──────────────────────────────────────────────────────
         // ── Asset pin view (embedded inspector) ──────────────────────────────
         // ── Hierarchy + Inspector view (Prefab / SceneObject tabs) ───────────
@@ -1227,7 +1229,7 @@ namespace BetterTabs
             if (!string.IsNullOrEmpty(tab.searchQuery))
             {
                 _searchInputText = tab.searchQuery;
-                _search.ForceCommit(tab.searchQuery, tab.path);
+                _search.ForceCommit(tab.searchQuery);
             }
         }
 

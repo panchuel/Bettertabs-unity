@@ -359,3 +359,27 @@
 .bt-item--selected .bt-item__label {
     color: rgb(255, 255, 255);
 }
+
+/* Search field: collapsed into the magnifier, expands leftwards ------------ */
+.bt-search {
+    width: 0;
+    min-width: 0;
+    flex-shrink: 0;
+    margin: 1px 0 1px 0;
+    overflow: hidden;
+    opacity: 0;
+    transition-property: width, opacity;
+    transition-duration: 0.18s;
+    transition-timing-function: ease-out;
+}
+
+.bt-search--open {
+    width: 180px;
+    opacity: 1;
+}
+
+.bt-search > .unity-base-field__input {
+    min-width: 0;
+    height: 18px;
+    font-size: 11px;
+}

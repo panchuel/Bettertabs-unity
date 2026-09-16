@@ -18,6 +18,10 @@ namespace BetterTabs
         readonly VisualElement _row;
         readonly Button _leftArrow;
         readonly Button _rightArrow;
+        readonly TextField _searchField;
+        readonly Button _searchBtn;
+        readonly Button _viewBtn;
+        readonly Button _unitySearchBtn;
         readonly Button _addBtn;
         readonly Button _pingBtn;
         readonly Button _panelBtn;
@@ -44,6 +48,9 @@ namespace BetterTabs
         public event Action AddClicked;
         public event Action PingClicked;
         public event Action PanelToggleClicked;
+        public event Action<string> SearchChanged;
+        public event Action ViewToggleClicked;
+        public event Action UnitySearchClicked;
 
         public BetterTabsBarView()
         {
@@ -66,6 +73,35 @@ namespace BetterTabs
 
             _rightArrow = MakeButton("›", "bt-tabbar__arrow", () => ScrollBy(ScrollStep));
             Add(_rightArrow);
+
+            _unitySearchBtn = MakeButton(null, null, () => UnitySearchClicked?.Invoke());
+            _unitySearchBtn.tooltip = "Open Unity Search";
+            _unitySearchBtn.style.display = DisplayStyle.None;
+            Texture2D advIcon = EditorGUIUtility.FindTexture("d_SearchWindow");
+            if (advIcon == null) advIcon = EditorGUIUtility.FindTexture("d_ViewToolZoom");
+            if (advIcon != null) _unitySearchBtn.style.backgroundImage = Background.FromTexture2D(advIcon);
+            else _unitySearchBtn.text = "⊚";
+            Add(_unitySearchBtn);
+
+            // Search: a magnifier that expands a field to its left when toggled.
+            _searchField = new TextField();
+            _searchField.AddToClassList("bt-search");
+            _searchField.RegisterValueChangedCallback(e => SearchChanged?.Invoke(e.newValue));
+            _searchField.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Escape) CloseSearch();
+            });
+            Add(_searchField);
+
+            _searchBtn = MakeButton(null, null, ToggleSearch);
+            _searchBtn.tooltip = "Search all assets";
+            Texture2D magnifier = EditorGUIUtility.FindTexture("d_Search Icon");
+            if (magnifier != null) _searchBtn.style.backgroundImage = Background.FromTexture2D(magnifier);
+            else _searchBtn.text = "⌕";
+            Add(_searchBtn);
+
+            _viewBtn = MakeButton(null, null, () => ViewToggleClicked?.Invoke());
+            Add(_viewBtn);
 
             _addBtn = MakeButton("+", null, () => AddClicked?.Invoke());
             _addBtn.tooltip = "Add tab from current selection";
@@ -91,6 +127,30 @@ namespace BetterTabs
             return b;
         }
 
+        public void ToggleSearch()
+        {
+            if (_searchField.ClassListContains("bt-search--open")) CloseSearch();
+            else OpenSearch();
+        }
+
+        void OpenSearch()
+        {
+            _searchField.AddToClassList("bt-search--open");
+            _unitySearchBtn.style.display = DisplayStyle.Flex;
+            _searchField.schedule.Execute(() => _searchField.Q("unity-text-input")?.Focus());
+        }
+
+        public void CloseSearch()
+        {
+            _searchField.RemoveFromClassList("bt-search--open");
+            _unitySearchBtn.style.display = DisplayStyle.None;
+            if (!string.IsNullOrEmpty(_searchField.value))
+            {
+                _searchField.SetValueWithoutNotify("");
+                SearchChanged?.Invoke("");
+            }
+        }
+
         // ── Data ──────────────────────────────────────────────────────────────
 
         public void SetTabs(List<BetterTabEntry> tabs, int selectedIndex)
@@ -101,9 +161,20 @@ namespace BetterTabs
             Rebuild();
         }
 
-        public void SetButtonState(bool canAdd, bool showPing, bool panelOpen)
+        public void SetButtonState(bool canAdd, bool showPing, bool panelOpen,
+            bool showView, bool gridView)
         {
             _addBtn.SetEnabled(canAdd);
+
+            _viewBtn.style.display = showView ? DisplayStyle.Flex : DisplayStyle.None;
+            if (showView)
+            {
+                Texture2D viewIcon = EditorGUIUtility.FindTexture(
+                    gridView ? "d_UnityEditor.ConsoleWindow" : "d_GridLayoutGroup Icon");
+                if (viewIcon != null) _viewBtn.style.backgroundImage = Background.FromTexture2D(viewIcon);
+                else _viewBtn.text = gridView ? "≡" : "⊞";
+                _viewBtn.tooltip = gridView ? "List view" : "Grid view";
+            }
 
             _pingBtn.style.display = showPing ? DisplayStyle.Flex : DisplayStyle.None;
             if (showPing && _pingBtn.style.backgroundImage.value.texture == null)
