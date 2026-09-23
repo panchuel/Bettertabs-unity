@@ -17,8 +17,10 @@ namespace BetterTabs
         const float PreviewMaxH = 400f;
         const float DragThreshold = 3f;
 
+        readonly VisualElement _badge;
         readonly Image _icon;
         readonly Label _title;
+        readonly Label _subtitle;
         readonly ScrollView _inspectorScroll;
         readonly VisualElement _previewBlock;
         readonly Label _previewTitle;
@@ -37,6 +39,9 @@ namespace BetterTabs
         float _pressHeight;
 
         public event Action<string> OpenRequested;
+
+        // An object reference was clicked; the owner reveals it in the left panel.
+        public event Action<string> AssetReferenceClicked;
         public event Action<float> PreviewHeightChanged;
         public event Action<bool> PreviewCollapsedChanged;
 
@@ -44,22 +49,36 @@ namespace BetterTabs
         {
             style.flexGrow = 1;
 
-            // ── Toolbar ───────────────────────────────────────────────────────
-            VisualElement toolbar = new VisualElement();
-            toolbar.AddToClassList("bt-inspector__toolbar");
+            // ── Header ────────────────────────────────────────────────────────
+            // Badge, name and full path, instead of a 22px strip with a bold label:
+            // an asset tab is a destination, so it gets a destination's header.
+            VisualElement assetHeader = new VisualElement();
+            assetHeader.AddToClassList("bt-inspector__header");
+
+            _badge = new VisualElement();
+            _badge.AddToClassList("bt-inspector__badge");
 
             _icon = new Image { scaleMode = ScaleMode.ScaleToFit };
             _icon.AddToClassList("bt-inspector__icon");
-            toolbar.Add(_icon);
+            _badge.Add(_icon);
+            assetHeader.Add(_badge);
+
+            VisualElement titles = new VisualElement();
+            titles.AddToClassList("bt-inspector__titles");
 
             _title = new Label();
             _title.AddToClassList("bt-inspector__title");
-            toolbar.Add(_title);
+            titles.Add(_title);
+
+            _subtitle = new Label();
+            _subtitle.AddToClassList("bt-inspector__subtitle");
+            titles.Add(_subtitle);
+            assetHeader.Add(titles);
 
             Button open = new Button(() => OpenRequested?.Invoke(_path)) { text = "Open" };
             open.AddToClassList("bt-inspector__open");
-            toolbar.Add(open);
-            Add(toolbar);
+            assetHeader.Add(open);
+            Add(assetHeader);
 
             // ── Inspector body ────────────────────────────────────────────────
             _inspectorScroll = new ScrollView(ScrollViewMode.Vertical);
@@ -90,6 +109,9 @@ namespace BetterTabs
             _previewBlock.Add(_previewBody);
 
             Add(_previewBlock);
+
+            BetterInspectorLinks.MirrorObjectFieldClicks(this,
+                path => AssetReferenceClicked?.Invoke(path));
         }
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -100,6 +122,13 @@ namespace BetterTabs
             _previewCollapsed = collapsed;
             ApplyPreviewLayout();
         }
+
+        // The owner mirrors these through the change events, but it persists them on
+        // shutdown; reading them back from here means a mirror that ever goes stale
+        // cannot save an old size over a good one.
+        public float CurrentPreviewHeight => _previewHeight;
+
+        public bool IsPreviewCollapsed => _previewCollapsed;
 
         public void SetAsset(string path)
         {
@@ -112,9 +141,14 @@ namespace BetterTabs
             UnityEngine.Object obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
             if (obj != null) _editor = Editor.CreateEditor(obj);
 
+            Color tint = BetterAssetTypeColors.TintForPath(path);
             _icon.image = AssetDatabase.GetCachedIcon(path);
+            _icon.tintColor = tint;
+            _badge.style.backgroundColor = new Color(tint.r, tint.g, tint.b, 0.14f);
+
             _title.text = Path.GetFileNameWithoutExtension(path);
-            _previewTitle.text = Path.GetFileNameWithoutExtension(path);
+            _subtitle.text = path;
+            _previewTitle.text = "PREVIEW";
 
             if (_editor == null)
             {

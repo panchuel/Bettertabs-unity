@@ -19,6 +19,10 @@ namespace BetterTabs
         public string path;            // Asset path for Folder/Asset/Prefab
         public string globalObjectId;  // Only for SceneObject
         public string name;
+
+        // Index into BetterTabColors; 0 (None) leaves the tab with the default look.
+        public int colorIndex;
+
         public List<string> expandedPaths = new List<string>();
         public string searchQuery = "";
 

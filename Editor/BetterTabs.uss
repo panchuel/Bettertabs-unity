@@ -1,10 +1,56 @@
-/* Tab bar ------------------------------------------------------------------ */
+/* ==========================================================================
+   BetterTabs — design tokens
+   Dark-only, as the redesign spec defines it. USS has no `gap`, no
+   `text-transform` and no `font-variant-numeric`: spacing is done with
+   margins, and upper-casing happens in C#.
+   ========================================================================== */
+.bt-root {
+    --bg-window: rgb(28, 28, 30);
+    --bg-tabbar: rgb(40, 40, 43);
+    --bg-toolbar: rgb(35, 35, 38);
+    --bg-panel: rgb(31, 31, 33);
+    --bg-statusbar: rgb(32, 32, 34);
+    --bg-input: rgb(26, 26, 28);
+    --bg-card: rgb(35, 35, 38);
+
+    --border-hairline: rgb(0, 0, 0);
+    --border-control: rgb(58, 58, 62);
+    --border-card: rgb(51, 51, 54);
+
+    --accent: rgb(91, 157, 217);
+    --accent-soft: rgba(91, 157, 217, 0.18);
+    --accent-soft-hover: rgba(91, 157, 217, 0.14);
+    --accent-fill-strong: rgb(58, 91, 120);
+    --accent-on-fill: rgb(220, 236, 251);
+    --accent-text: rgb(223, 238, 255);
+
+    --text-primary: rgb(242, 242, 243);
+    --text-default: rgb(220, 220, 222);
+    --text-secondary: rgb(154, 154, 157);
+    --text-muted: rgb(122, 122, 125);
+    --text-faint: rgb(110, 110, 113);
+
+    --hover-soft: rgba(255, 255, 255, 0.06);
+    --hover-strong: rgba(255, 255, 255, 0.15);
+    --zebra: rgba(255, 255, 255, 0.015);
+
+    flex-grow: 1;
+    background-color: var(--bg-window);
+}
+
+/* ==========================================================================
+   Tab bar
+   ========================================================================== */
 .bt-tabbar {
     flex-direction: row;
-    height: 22px;
-    background-color: var(--unity-colors-toolbar-background);
+    align-items: flex-end;
+    height: 30px;
+    flex-shrink: 0;
+    padding-left: 5px;
+    padding-right: 5px;
+    background-color: var(--bg-tabbar);
     border-bottom-width: 1px;
-    border-bottom-color: var(--unity-colors-toolbar-border);
+    border-bottom-color: var(--border-hairline);
 }
 
 .bt-tabbar__scroll {
@@ -15,29 +61,25 @@
 
 .bt-tabbar__row {
     flex-direction: row;
-    height: 22px;
+    align-items: flex-end;
+    height: 30px;
 }
 
-/* Individual tab ----------------------------------------------------------- */
 .bt-tab {
     flex-direction: row;
     align-items: center;
     flex-shrink: 0;
-    min-width: 80px;
-    max-width: 180px;
-    height: 22px;
-    padding-left: 4px;
-    padding-right: 2px;
-    border-right-width: 1px;
-    border-right-color: rgba(0, 0, 0, 0.25);
-}
-
-.bt-tab:hover {
-    background-color: rgba(255, 255, 255, 0.06);
-}
-
-/* Tabs slide to the slot they are pushed into while another one is dragged. */
-.bt-tab {
+    min-width: 72px;
+    max-width: 170px;
+    height: 27px;
+    margin-right: 2px;
+    padding-left: 10px;
+    padding-right: 10px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    /* Reserved so the active tab's accent rule does not change the tab height. */
+    border-top-width: 2px;
+    border-top-color: rgba(0, 0, 0, 0);
     transition-property: translate;
     transition-duration: 0.12s;
     transition-timing-function: ease-out;
@@ -48,38 +90,41 @@
     transition-duration: 0s;
 }
 
-.bt-tab--active {
-    background-color: rgba(64, 120, 191, 0.5);
+.bt-tab:hover {
+    background-color: var(--hover-soft);
 }
 
-/* Needed: .bt-tab:hover outweighs .bt-tab--active on specificity alone, so the
-   active tab would turn grey on hover without this rule. */
+/* The active tab fuses with the content below it and is marked by the accent. */
+.bt-tab--active {
+    background-color: var(--bg-window);
+    border-top-color: var(--accent);
+}
+
 .bt-tab--active:hover {
-    background-color: rgba(74, 134, 207, 0.65);
+    background-color: var(--bg-window);
 }
 
 .bt-tab--dragging {
-    background-color: rgb(51, 115, 204);
-    border-left-width: 1px;
-    border-left-color: rgba(0, 0, 0, 0.5);
-    border-right-color: rgba(0, 0, 0, 0.5);
-}
-
-.bt-tab--dragging .bt-tab__label {
-    color: rgb(255, 255, 255);
+    background-color: var(--accent-fill-strong);
 }
 
 .bt-tab__icon {
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
+    opacity: 0.75;
+}
+
+.bt-tab--active .bt-tab__icon {
+    opacity: 1;
 }
 
 .bt-tab__label {
     flex-grow: 1;
     flex-shrink: 1;
-    margin-left: 3px;
-    font-size: 10px;
+    margin-left: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -87,74 +132,302 @@
 }
 
 .bt-tab--active .bt-tab__label {
+    color: var(--text-primary);
     -unity-font-style: bold;
 }
 
+/* Only the hovered tab shows its close button; the space stays reserved so the
+   label never shifts when the pointer arrives. */
 .bt-tab__close {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
-    margin: 0;
+    margin: 0 0 0 6px;
     padding: 0;
     border-width: 0;
-    font-size: 11px;
+    border-radius: 3px;
+    font-size: 10px;
+    color: var(--text-muted);
     background-color: rgba(0, 0, 0, 0);
+    opacity: 0;
+}
+
+.bt-tab:hover .bt-tab__close {
+    opacity: 1;
 }
 
 .bt-tab__close:hover {
-    background-color: rgba(255, 255, 255, 0.22);
+    background-color: var(--hover-strong);
+    color: var(--text-primary);
 }
 
-/* Toolbar buttons ---------------------------------------------------------- */
-.bt-tabbar__btn {
-    flex-shrink: 0;
+.bt-tabbar__add {
+    width: 20px;
+    min-width: 20px;
     height: 20px;
-    min-width: 22px;
-    margin: 1px 0 1px 0;
-    padding: 0 3px 0 3px;
+    flex-shrink: 0;
+    margin: 0 0 4px 4px;
+    padding: 0;
     border-width: 0;
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--text-muted);
     background-color: rgba(0, 0, 0, 0);
 }
 
-.bt-tabbar__btn:hover:enabled {
-    background-color: rgba(255, 255, 255, 0.15);
+.bt-tabbar__add:hover:enabled {
+    background-color: var(--hover-strong);
+    color: var(--text-primary);
 }
 
-.bt-tabbar__btn:disabled {
+.bt-tabbar__add:disabled {
     opacity: 0.4;
 }
 
 .bt-tabbar__arrow {
-    width: 16px;
-    min-width: 16px;
+    width: 14px;
+    min-width: 14px;
+    height: 20px;
+    flex-shrink: 0;
+    margin: 0 0 4px 0;
+    padding: 0;
+    border-width: 0;
+    color: var(--text-muted);
+    background-color: rgba(0, 0, 0, 0);
 }
 
-/* Drop hint when dragging assets over the bar ------------------------------ */
+.bt-tabbar__arrow:hover:enabled {
+    color: var(--text-primary);
+}
+
+.bt-tabbar__arrow:disabled {
+    opacity: 0.35;
+}
+
+/* Drop hint while an asset drag hovers the bar */
 .bt-tabbar--drophint {
     background-color: rgba(51, 128, 255, 0.15);
-    border-width: 2px;
-    border-color: rgba(77, 153, 255, 0.8);
+    border-bottom-width: 2px;
+    border-bottom-color: var(--accent);
 }
 
-/* Project tree rows -------------------------------------------------------- */
+/* ==========================================================================
+   Toolbar — breadcrumb, search, view toggle, actions
+   ========================================================================== */
+.bt-toolbar {
+    flex-direction: row;
+    align-items: center;
+    height: 42px;
+    flex-shrink: 0;
+    padding-left: 12px;
+    padding-right: 12px;
+    background-color: var(--bg-toolbar);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border-hairline);
+}
+
+.bt-crumbs {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 1;
+    overflow: hidden;
+}
+
+.bt-crumb {
+    flex-shrink: 0;
+    height: 20px;
+    margin: 0;
+    padding: 0 2px 0 2px;
+    border-width: 0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-crumb:hover:enabled {
+    color: var(--text-primary);
+}
+
+.bt-crumb--last {
+    color: var(--text-primary);
+    -unity-font-style: bold;
+}
+
+.bt-crumb__sep {
+    flex-shrink: 0;
+    margin-left: 3px;
+    margin-right: 3px;
+    font-size: 12px;
+    color: rgb(92, 92, 96);
+}
+
+.bt-toolbar__spacer {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.bt-toolbar__btn {
+    width: 26px;
+    min-width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    margin: 0 0 0 6px;
+    padding: 0;
+    border-width: 0;
+    border-radius: 6px;
+    color: var(--text-muted);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-toolbar__btn:hover:enabled {
+    background-color: var(--hover-strong);
+    color: var(--text-primary);
+}
+
+.bt-toolbar__btn:disabled {
+    opacity: 0.4;
+}
+
+.bt-toolbar__btn--lead {
+    margin-left: 0;
+    margin-right: 8px;
+}
+
+/* Labelled action, e.g. "Focus in Scene" on a prefab / scene-object tab. */
+.bt-toolbar__action {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 26px;
+    margin: 0 0 0 6px;
+    padding: 0 10px 0 10px;
+    border-width: 1px;
+    border-color: var(--border-control);
+    border-radius: 6px;
+    font-size: 12px;
+    color: rgb(168, 168, 171);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-toolbar__action:hover:enabled {
+    color: var(--text-primary);
+    border-color: rgb(80, 80, 86);
+}
+
+.bt-search {
+    flex-shrink: 0;
+    width: 220px;
+    height: 26px;
+    margin: 0 0 0 6px;
+}
+
+.bt-search > .unity-base-field__input {
+    min-width: 0;
+    height: 26px;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 12px;
+    color: var(--text-default);
+    background-color: var(--bg-input);
+    border-width: 1px;
+    border-color: var(--border-control);
+    border-radius: 6px;
+}
+
+.bt-search > .unity-base-field__input:focus {
+    border-color: var(--accent);
+}
+
+/* Segmented grid / list toggle */
+.bt-seg {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 26px;
+    margin-left: 6px;
+    border-width: 1px;
+    border-color: var(--border-control);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.bt-seg__btn {
+    width: 28px;
+    min-width: 28px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    border-radius: 0;
+    color: var(--text-muted);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-seg__btn:hover:enabled {
+    color: var(--text-primary);
+    background-color: var(--hover-soft);
+}
+
+.bt-seg__btn--active {
+    background-color: var(--accent-fill-strong);
+    color: var(--accent-on-fill);
+}
+
+.bt-seg__btn--active:hover:enabled {
+    background-color: var(--accent-fill-strong);
+    color: var(--accent-on-fill);
+}
+
+.bt-seg__sep {
+    width: 1px;
+    height: 24px;
+    flex-shrink: 0;
+    background-color: var(--border-control);
+}
+
+/* ==========================================================================
+   Panels
+   ========================================================================== */
+.bt-panel {
+    background-color: var(--bg-panel);
+    border-right-width: 1px;
+    border-right-color: var(--border-hairline);
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.bt-content {
+    background-color: var(--bg-window);
+}
+
+/* Tree rows -------------------------------------------------------------- */
 .bt-row {
     flex-direction: row;
     align-items: center;
-    height: 18px;
+    height: 24px;
     flex-grow: 1;
+    padding-left: 6px;
+    padding-right: 4px;
+    border-radius: 4px;
+}
+
+.bt-row:hover {
+    background-color: var(--hover-soft);
 }
 
 .bt-row__icon {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
 }
 
 .bt-row__label {
     flex-grow: 1;
     flex-shrink: 1;
-    margin-left: 3px;
-    font-size: 11px;
+    margin-left: 6px;
+    font-size: 12px;
+    color: rgb(199, 199, 202);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -164,12 +437,23 @@
 .bt-row__field {
     flex-grow: 1;
     flex-shrink: 1;
-    margin-left: 3px;
+    margin-left: 4px;
     margin-right: 2px;
 }
 
 .bt-row--highlighted {
-    background-color: rgba(64, 120, 191, 0.30);
+    background-color: var(--accent-soft);
+}
+
+.bt-row--highlighted .bt-row__label {
+    color: var(--accent-text);
+    -unity-font-style: bold;
+}
+
+/* A folder the project keeps around but no longer builds, e.g. "Thing (Old)". */
+.bt-row--deprecated .bt-row__label {
+    color: var(--text-muted);
+    -unity-font-style: italic;
 }
 
 .bt-row__add {
@@ -179,49 +463,240 @@
     margin: 0 2px 0 0;
     padding: 0;
     border-width: 0;
+    border-radius: 4px;
     font-size: 12px;
+    color: var(--text-muted);
     background-color: rgba(0, 0, 0, 0);
 }
 
 .bt-row__add:hover {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: var(--hover-strong);
+    color: var(--text-primary);
 }
 
 .bt-row__type {
     flex-shrink: 0;
     width: 96px;
     margin-right: 4px;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     -unity-text-align: middle-right;
 }
 
-/* Embedded inspector ------------------------------------------------------- */
-.bt-inspector__toolbar {
+/* The TreeView paints its own selection band; the accent-soft row is ours. */
+.bt-tree .unity-collection-view__item--selected {
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-tree .unity-collection-view__item--selected .bt-row {
+    background-color: var(--accent-soft);
+}
+
+.bt-tree .unity-collection-view__item--selected .bt-row__label {
+    color: var(--accent-text);
+    -unity-font-style: bold;
+}
+
+/* Indentation guides: one hairline per depth level, so a deep subtree stays
+   readable. The hierarchy panel had none at all. */
+.bt-tree--guides .unity-tree-view__item-indent {
+    width: 16px;
+    border-left-width: 1px;
+    border-left-color: var(--border-card);
+}
+
+/* ==========================================================================
+   Flat asset list — grid and list modes
+   ========================================================================== */
+.bt-list__header {
     flex-direction: row;
     align-items: center;
-    height: 22px;
+    height: 26px;
     flex-shrink: 0;
-    background-color: var(--unity-colors-toolbar-background);
+    padding-left: 16px;
+    padding-right: 16px;
+    background-color: var(--bg-statusbar);
     border-bottom-width: 1px;
-    border-bottom-color: var(--unity-colors-toolbar-border);
-    padding-left: 4px;
+    border-bottom-color: var(--border-hairline);
+}
+
+.bt-list__col {
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    color: rgb(139, 139, 142);
+    -unity-text-align: middle-left;
+}
+
+.bt-list__col--name {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.bt-list__col--type {
+    width: 140px;
+    flex-shrink: 0;
+}
+
+.bt-list__items--list {
+    flex-direction: column;
+}
+
+.bt-list__items--grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    padding: 20px 8px 20px 20px;
+}
+
+.bt-item {
+    align-items: center;
+}
+
+.bt-item--row {
+    flex-direction: row;
+    height: 32px;
+    padding-left: 16px;
+    padding-right: 16px;
+}
+
+.bt-item--odd {
+    background-color: var(--zebra);
+}
+
+.bt-item--grid {
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 96px;
+    height: 92px;
+    margin: 0 12px 16px 0;
+    padding: 8px 4px 8px 4px;
+    border-radius: 8px;
+}
+
+.bt-item:hover {
+    background-color: var(--accent-soft-hover);
+}
+
+.bt-item--selected {
+    background-color: var(--accent-soft);
+}
+
+.bt-item--selected:hover {
+    background-color: var(--accent-soft);
+}
+
+.bt-item__icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.bt-item__preview {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+}
+
+.bt-item__label {
+    font-size: 12px;
+    color: rgb(236, 238, 240);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bt-item--row .bt-item__label {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 8px;
+    -unity-text-align: middle-left;
+}
+
+.bt-item--grid .bt-item__label {
+    width: 88px;
+    margin-top: 6px;
+    font-size: 11px;
+    -unity-text-align: upper-center;
+}
+
+.bt-item--selected .bt-item__label {
+    color: var(--text-primary);
+}
+
+/* An asset Unity treats as stale, e.g. a scene that was never saved. */
+.bt-item--dim {
+    opacity: 0.6;
+}
+
+.bt-item--dim .bt-item__label {
+    -unity-font-style: italic;
+}
+
+/* ==========================================================================
+   Status bar
+   ========================================================================== */
+.bt-status {
+    height: 24px;
+    flex-shrink: 0;
+    padding-left: 12px;
+    padding-right: 12px;
+    background-color: var(--bg-statusbar);
+    border-top-width: 1px;
+    border-top-color: var(--border-hairline);
+    font-size: 11px;
+    color: var(--text-muted);
+    -unity-text-align: middle-left;
+}
+
+/* ==========================================================================
+   Embedded inspector
+   ========================================================================== */
+.bt-inspector__header {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 16px 20px 12px 20px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border-hairline);
+}
+
+.bt-inspector__badge {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
 }
 
 .bt-inspector__icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
+    width: 17px;
+    height: 17px;
+}
+
+.bt-inspector__titles {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 10px;
+    overflow: hidden;
 }
 
 .bt-inspector__title {
-    flex-grow: 1;
-    margin-left: 5px;
-    font-size: 11px;
+    font-size: 15px;
     -unity-font-style: bold;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bt-inspector__subtitle {
+    margin-top: 1px;
+    font-size: 11px;
+    color: rgb(139, 139, 142);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -229,39 +704,130 @@
 
 .bt-inspector__open {
     flex-shrink: 0;
-    height: 18px;
-    margin: 0 2px 0 0;
-    padding: 0 8px 0 8px;
-    font-size: 10px;
+    height: 26px;
+    margin: 0;
+    padding: 0 12px 0 12px;
+    border-width: 1px;
+    border-color: var(--border-control);
+    border-radius: 6px;
+    font-size: 12px;
+    color: rgb(168, 168, 171);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-inspector__open:hover:enabled {
+    color: var(--text-primary);
+    border-color: rgb(80, 80, 86);
 }
 
 .bt-inspector__empty {
     margin-top: 12px;
     -unity-text-align: middle-center;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--text-muted);
 }
 
-/* Preview block ------------------------------------------------------------ */
+/* Section label, e.g. "COMPONENTS" */
+.bt-section {
+    flex-shrink: 0;
+    margin: 14px 20px 8px 20px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+}
+
+/* Component card: the real component name instead of a repeated "Script" row.
+   flex-shrink MUST stay 0: inside a ScrollView the default 1 compresses the cards
+   instead of scrolling them, and an embedded inspector then re-measures itself at
+   the squeezed height every frame, which reads as the last card flickering. */
+.bt-comp {
+    flex-shrink: 0;
+    margin: 0 20px 8px 20px;
+    border-width: 1px;
+    border-color: var(--border-card);
+    border-radius: 6px;
+    background-color: var(--bg-card);
+}
+
+.bt-comp__header {
+    flex-direction: row;
+    align-items: center;
+    height: 32px;
+    flex-shrink: 0;
+    padding-left: 10px;
+    padding-right: 6px;
+}
+
+.bt-comp__icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+.bt-comp__name {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--text-default);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+}
+
+.bt-comp__menu {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-faint);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.bt-comp__menu:hover {
+    background-color: var(--hover-strong);
+    color: var(--text-primary);
+}
+
+.bt-comp__body {
+    flex-shrink: 0;
+    padding: 2px 8px 8px 8px;
+    border-top-width: 1px;
+    border-top-color: var(--border-card);
+}
+
+/* ==========================================================================
+   Preview block
+   ========================================================================== */
 .bt-preview {
     flex-shrink: 0;
     border-top-width: 1px;
-    border-top-color: rgba(0, 0, 0, 0.4);
+    border-top-color: var(--border-hairline);
+    background-color: var(--bg-window);
 }
 
 .bt-preview__header {
     flex-direction: row;
     align-items: center;
-    height: 20px;
+    height: 24px;
     flex-shrink: 0;
-    background-color: var(--unity-colors-toolbar-background);
+    padding-left: 12px;
+    background-color: var(--bg-statusbar);
     cursor: resize-vertical;
 }
 
 .bt-preview__title {
     flex-grow: 1;
-    margin-left: 6px;
     font-size: 11px;
     -unity-font-style: bold;
+    letter-spacing: 0.4px;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -273,113 +839,47 @@
     height: 18px;
 }
 
-/* Flat asset list (grid view + search results) ----------------------------- */
-.bt-list__header {
-    flex-shrink: 0;
-    padding: 3px 6px 3px 6px;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.5);
-}
-
-.bt-list__items--list {
-    flex-direction: column;
-}
-
-.bt-list__items--grid {
+/* ==========================================================================
+   Colour picker popup
+   ========================================================================== */
+.bt-swatches {
+    position: absolute;
     flex-direction: row;
     flex-wrap: wrap;
-    align-content: flex-start;
+    max-width: 268px;
+    padding: 6px 2px 2px 6px;
+    background-color: rgb(42, 42, 42);
+    border-width: 1px;
+    border-color: rgba(0, 0, 0, 0.65);
+    border-radius: 8px;
 }
 
-.bt-item {
+.bt-swatch {
+    width: 22px;
+    height: 22px;
+    margin: 0 4px 4px 0;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: rgba(0, 0, 0, 0.35);
     align-items: center;
+    justify-content: center;
 }
 
-.bt-item--row {
-    flex-direction: row;
-    height: 20px;
-    padding-left: 2px;
+.bt-swatch:hover {
+    border-color: rgba(255, 255, 255, 0.7);
 }
 
-.bt-item--odd {
-    background-color: rgba(0, 0, 0, 0.04);
+.bt-swatch--selected {
+    border-width: 2px;
+    border-color: rgb(255, 255, 255);
 }
 
-.bt-item--grid {
-    flex-direction: column;
-    justify-content: flex-start;
-    width: 78px;
-    height: 78px;
-    padding: 4px;
+.bt-swatch--none {
+    background-color: rgba(255, 255, 255, 0.06);
 }
 
-.bt-item--selected {
-    background-color: rgb(43, 92, 135);
-}
-
-.bt-item:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-}
-
-.bt-item--selected:hover {
-    background-color: rgb(52, 108, 156);
-}
-
-.bt-item__icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-}
-
-.bt-item__preview {
-    width: 48px;
-    height: 48px;
-    flex-shrink: 0;
-}
-
-.bt-item__label {
-    font-size: 10px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.bt-item--row .bt-item__label {
-    flex-grow: 1;
-    margin-left: 4px;
-    -unity-text-align: middle-left;
-}
-
-.bt-item--grid .bt-item__label {
-    width: 70px;
-    margin-top: 2px;
-    -unity-text-align: upper-center;
-}
-
-.bt-item--selected .bt-item__label {
-    color: rgb(255, 255, 255);
-}
-
-/* Search field: collapsed into the magnifier, expands leftwards ------------ */
-.bt-search {
-    width: 0;
-    min-width: 0;
-    flex-shrink: 0;
-    margin: 1px 0 1px 0;
-    overflow: hidden;
-    opacity: 0;
-    transition-property: width, opacity;
-    transition-duration: 0.18s;
-    transition-timing-function: ease-out;
-}
-
-.bt-search--open {
-    width: 180px;
-    opacity: 1;
-}
-
-.bt-search > .unity-base-field__input {
-    min-width: 0;
-    height: 18px;
-    font-size: 11px;
+.bt-swatch__clear {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.75);
+    -unity-text-align: middle-center;
 }

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.UIElements;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -28,9 +29,17 @@ namespace BetterTabs
         Transform _root;
         string _selectionPath;
         string _inspectorKey;
+        GameObject _inspectorTarget;
+
+        // Remembers the width the user dragged the divider to. Survives the view
+        // being hidden and ignores the squeezes the layout applies on its own.
+        BetterSplitterTracker _splitter;
 
         public event Action<string> SelectionChanged;
         public event Action ValueChanged;
+
+        // An object reference was clicked; the owner reveals it in the left panel.
+        public event Action<string> AssetReferenceClicked;
 
         public BetterGameObjectView(float splitterX)
         {
@@ -47,11 +56,15 @@ namespace BetterTabs
 
             _hierarchy = new TreeView
             {
-                fixedItemHeight = 18f,
+                fixedItemHeight = 24f,
                 selectionType = SelectionType.Single,
                 virtualizationMethod = CollectionVirtualizationMethod.FixedHeight
             };
             _hierarchy.style.flexGrow = 1;
+            _hierarchy.AddToClassList("bt-tree");
+            // The guides are the point of this panel's redesign: without a hairline
+            // per depth level there is no way to see what is a child of what.
+            _hierarchy.AddToClassList("bt-tree--guides");
             _hierarchy.makeItem = MakeRow;
             _hierarchy.bindItem = BindRow;
             _hierarchy.selectionChanged += OnHierarchySelectionChanged;
@@ -66,6 +79,7 @@ namespace BetterTabs
             // TwoPaneSplitView writes while dragging, so using them as panes directly
             // makes the divider appear dead and lets content spill over the other pane.
             _hierarchyPane = MakePane();
+            _hierarchyPane.AddToClassList("bt-panel");
             _hierarchyPane.Add(_hierarchy);
             _split.Add(_hierarchyPane);
 
@@ -78,6 +92,11 @@ namespace BetterTabs
 
             Add(_split);
 
+            _splitter = new BetterSplitterTracker(_split, _hierarchyPane,
+                Mathf.Max(MinPaneW, splitterX));
+
+            BetterInspectorLinks.MirrorObjectFieldClicks(this,
+                path => AssetReferenceClicked?.Invoke(path));
         }
 
         static VisualElement MakePane()
@@ -101,14 +120,14 @@ namespace BetterTabs
         {
             if (x <= 0f || float.IsNaN(x)) return;
             float target = Mathf.Max(MinPaneW, x);
+            _splitter.Set(target);
             schedule.Execute(() => _split.fixedPaneInitialDimension = target);
         }
 
-        public float CurrentSplitterX()
-        {
-            float w = _hierarchyPane.resolvedStyle.width;
-            return (w > 0f && !float.IsNaN(w)) ? w : MinPaneW;
-        }
+        // The tracked width, never the live one: a hidden pane measures 0, and the
+        // owner persists this on shutdown regardless of which tab happens to be open.
+        // Reading the pane there used to save the collapsed width over a good one.
+        public float CurrentSplitterX() => _splitter.Width;
 
         // ── Target ────────────────────────────────────────────────────────────
 
@@ -133,7 +152,14 @@ namespace BetterTabs
             _root = root.transform;
             _selectionPath = selectionPath;
 
-            if (!sameRoot) RebuildHierarchy();
+            if (!sameRoot)
+            {
+                RebuildHierarchy();
+                // Switching between two prefab or scene-object tabs never passes
+                // through the pane-mode change that used to re-apply this, so each
+                // one came up with whatever width the split view happened to keep.
+                RestoreSplitter(_splitter.Width);
+            }
 
             // Mirror the stored selection without re-notifying the owner.
             Transform selected = ResolveSelection();
@@ -232,6 +258,7 @@ namespace BetterTabs
 
             label.text = t != null ? t.name : path;
             icon.image = EditorGUIUtility.IconContent("GameObject Icon").image;
+            icon.tintColor = BetterAssetTypeColors.GameObjectTint;
             // Inactive objects are dimmed, like the scene hierarchy does.
             row.style.opacity = (t != null && !t.gameObject.activeInHierarchy) ? 0.5f : 1f;
         }
@@ -259,17 +286,154 @@ namespace BetterTabs
 
             InvalidateInspectorCache();
             _inspector.Clear();
+            _inspectorTarget = target;
             if (target == null) return;
 
-            AddEditor(target);
+            _inspector.Add(BuildObjectHeader(target));
+            _inspector.Add(MakeEditor(target));
+
+            Label section = new Label("COMPONENTS");
+            section.AddToClassList("bt-section");
+            _inspector.Add(section);
+
             foreach (Component component in target.GetComponents<Component>())
             {
                 if (component == null) continue; // missing script
-                AddEditor(component);
+                _inspector.Add(BuildComponentCard(component));
             }
         }
 
-        void AddEditor(UnityEngine.Object target)
+        static VisualElement BuildObjectHeader(GameObject target)
+        {
+            VisualElement header = new VisualElement();
+            header.AddToClassList("bt-inspector__header");
+
+            VisualElement badge = new VisualElement();
+            badge.AddToClassList("bt-inspector__badge");
+            Color tint = BetterAssetTypeColors.GameObjectTint;
+            badge.style.backgroundColor = new Color(tint.r, tint.g, tint.b, 0.16f);
+
+            Image icon = new Image
+            {
+                scaleMode = ScaleMode.ScaleToFit,
+                image = EditorGUIUtility.IconContent("GameObject Icon").image,
+                tintColor = tint
+            };
+            icon.AddToClassList("bt-inspector__icon");
+            badge.Add(icon);
+            header.Add(badge);
+
+            VisualElement titles = new VisualElement();
+            titles.AddToClassList("bt-inspector__titles");
+
+            Label title = new Label(target.name);
+            title.AddToClassList("bt-inspector__title");
+            titles.Add(title);
+
+            Transform parent = target.transform.parent;
+            Label subtitle = new Label(parent != null
+                ? parent.name + " \u203a " + target.name
+                : target.name);
+            subtitle.AddToClassList("bt-inspector__subtitle");
+            titles.Add(subtitle);
+
+            header.Add(titles);
+            return header;
+        }
+
+        // One card per component, headed by the component's real type name. The stock
+        // inspector repeats a generic "Script" row instead, which says nothing about
+        // which of four MonoBehaviours a given block belongs to.
+        VisualElement BuildComponentCard(Component component)
+        {
+            VisualElement card = new VisualElement();
+            card.AddToClassList("bt-comp");
+
+            VisualElement header = new VisualElement();
+            header.AddToClassList("bt-comp__header");
+
+            Image icon = new Image { scaleMode = ScaleMode.ScaleToFit };
+            icon.AddToClassList("bt-comp__icon");
+            icon.image = EditorGUIUtility.ObjectContent(component, component.GetType()).image;
+            header.Add(icon);
+
+            Label name = new Label(component.GetType().Name);
+            name.AddToClassList("bt-comp__name");
+            header.Add(name);
+
+            Button menu = new Button { text = "\u22ee" };
+            menu.AddToClassList("bt-comp__menu");
+            menu.tooltip = "Component menu";
+            menu.clicked += () => ShowComponentMenu(component, menu.worldBound);
+            header.Add(menu);
+            card.Add(header);
+
+            VisualElement body = new VisualElement();
+            body.AddToClassList("bt-comp__body");
+            body.Add(MakeEditor(component));
+            card.Add(body);
+            return card;
+        }
+
+        // The operations Unity's own component context menu offers, built from the
+        // public API: the editor's real menu is not exposed to a custom window.
+        void ShowComponentMenu(Component component, Rect anchor)
+        {
+            GenericMenu menu = new GenericMenu();
+
+            if (component is Transform)
+                menu.AddDisabledItem(new GUIContent("Remove Component"));
+            else
+                menu.AddItem(new GUIContent("Remove Component"), false, () =>
+                {
+                    Undo.DestroyObjectImmediate(component);
+                    RebuildInspector();
+                });
+
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Move Up"), false, () =>
+            {
+                ComponentUtility.MoveComponentUp(component);
+                RebuildInspector();
+            });
+            menu.AddItem(new GUIContent("Move Down"), false, () =>
+            {
+                ComponentUtility.MoveComponentDown(component);
+                RebuildInspector();
+            });
+
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Copy Component"), false,
+                () => ComponentUtility.CopyComponent(component));
+            menu.AddItem(new GUIContent("Paste Component Values"), false, () =>
+            {
+                ComponentUtility.PasteComponentValues(component);
+                ValueChanged?.Invoke();
+                RebuildInspector();
+            });
+
+            MonoBehaviour behaviour = component as MonoBehaviour;
+            if (behaviour != null)
+            {
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("Edit Script"), false,
+                    () => AssetDatabase.OpenAsset(MonoScript.FromMonoBehaviour(behaviour)));
+            }
+
+            menu.DropDown(anchor);
+        }
+
+        // Adding or removing a component changes the card list, which the key-based
+        // cache would otherwise consider unchanged.
+        void RebuildInspector()
+        {
+            GameObject target = _inspectorTarget;
+            InvalidateInspectorCache();
+            ValueChanged?.Invoke();
+            RefreshInspector(target);
+        }
+
+        VisualElement MakeEditor(UnityEngine.Object target)
         {
             // Built from the object, not from an Editor we own: InspectorElement then
             // creates and disposes the editor itself. Destroying our own editor here
@@ -281,7 +445,11 @@ namespace BetterTabs
             SerializedObject tracked = new SerializedObject(target);
             element.TrackSerializedObjectValue(tracked, _ => ValueChanged?.Invoke());
 
-            _inspector.Add(element);
+            // The generated "Script" row is left alone on purpose. Hiding it made the
+            // InspectorElement regenerate its fields, which showed the row again, which
+            // hid it again: an endless relayout that read as the last card flickering.
+            // The card header already names the component, which was the actual problem.
+            return element;
         }
 
         // Forces the next RefreshInspector call to rebuild instead of matching the cache.

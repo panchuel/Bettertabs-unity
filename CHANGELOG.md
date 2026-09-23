@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **UI redesign** — one accent colour (`#5b9dd9`) now marks the active tab, the tree selection and the active view toggle, replacing the two unrelated highlight colours. Tabs are 32px with a rounded top and an accent rule, and fuse with the panel below them.
+- **New toolbar** — a 42px strip under the tabs holds a clickable breadcrumb of the active tab's path, the search field (no longer hidden behind a magnifier), the grid/list segmented toggle and an overflow menu. The tab bar itself now holds only tabs and the `+` button.
+- **Status bar** — item count and full path at the bottom of the window; the search result count moved here from the list header.
+- **Type-coloured icons** — folders, scenes, scripts, prefabs/GameObjects and data assets each get their own icon tint, in tabs, trees and lists. A colour assigned to a tab still wins over the type colour.
+- **Close button on hover** — a tab's `×` only appears while the pointer is over that tab. Its space is reserved, so labels never shift.
+- **Component cards** — the prefab/scene-object inspector shows one card per component headed by its real type name, replacing the repeated generic "Script" rows.
+- **Hierarchy indentation guides** — a hairline per depth level in the hierarchy panel.
+- **Asset inspector header** — icon badge tinted by type, asset name and full path, replacing the 22px title strip.
+- **List view columns** — a NAME / TYPE header, 32px rows and alternating row tint.
+
+### Added
+
+- **Tab colours** — right-click a tab and choose **Color…** to open a swatch popup under it. The tab's icon is tinted with the chosen colour. The `×` swatch clears it. The choice is stored per tab and survives editor restarts.
+- **Colour in the project panel** — a tagged folder's row is washed with its colour, fading out left to right, and every row beneath it takes a darker, fainter shade of the same one. Where tags nest, the deepest one wins.
+- **Set Tab Color shortcut** — registered unbound under **Edit ▸ Shortcuts ▸ BetterTabs**; bind it to open the swatch popup on the active tab without the context menu.
+- **Inspector references reveal in the project panel** — clicking an assigned object reference selects that asset in the left panel and scrolls to it, in BetterTabs' own inspectors **and in Unity's Inspector window**. Unity only pings its own Project window, which said nothing here. Works on inspectors drawn with UI Toolkit; a component with a custom IMGUI editor paints its fields inside an IMGUIContainer, where there is no element to hit-test.
+
+### Fixed
+
+- **Column widths survive a restart in prefab and scene-object tabs.** Closing Unity while any other tab was active read the width of the hidden hierarchy pane, which measures zero, and saved the minimum over the real value. Both splitters now track their last real width instead of asking a hidden panel.
+- **Tab bar scrolling lerps again.** The animation from 1.0.5 was lost in the UI Toolkit migration; the active tab now glides into view instead of snapping, and so do the overflow arrows.
+
+---
+
 ## [1.0.7] — 2026-05-13
 
 ### Added

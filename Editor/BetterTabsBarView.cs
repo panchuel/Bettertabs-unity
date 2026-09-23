@@ -1,33 +1,32 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEngine.UIElements.Experimental;
 
 namespace BetterTabs
 {
     // UI Toolkit tab bar. Owns presentation and pointer interaction (select, close,
     // reorder by drag, overflow scrolling). The window supplies the data and reacts
     // to the events; it never touches these visual elements directly.
+    //
+    // Toolbar controls (search, view toggle, ping, panel toggle) live in
+    // BetterTabsToolbarView: the bar holds tabs and the new-tab button, nothing else.
     internal class BetterTabsBarView : VisualElement
     {
         const float ScrollStep = 80f;
         const float DragThreshold = 4f;
+        const int ScrollAnimMs = 180;
 
         readonly ScrollView _scroll;
         readonly VisualElement _row;
         readonly Button _leftArrow;
         readonly Button _rightArrow;
-        readonly TextField _searchField;
-        readonly Button _searchBtn;
-        readonly Button _viewBtn;
-        readonly Button _unitySearchBtn;
         readonly Button _addBtn;
-        readonly Button _pingBtn;
-        readonly Button _panelBtn;
 
         readonly List<BetterTabEntry> _tabs = new List<BetterTabEntry>();
         int _selectedIndex = -1;
+        ValueAnimation<float> _scrollAnim;
 
         // Drag-reorder state. The DOM is left untouched while dragging: tabs are
         // placed by translate over a logical order, so layout never shifts mid-drag.
@@ -46,17 +45,13 @@ namespace BetterTabs
         public event Action<int> TabContextMenu;
         public event Action<int, int> TabMoved;
         public event Action AddClicked;
-        public event Action PingClicked;
-        public event Action PanelToggleClicked;
-        public event Action<string> SearchChanged;
-        public event Action ViewToggleClicked;
-        public event Action UnitySearchClicked;
 
         public BetterTabsBarView()
         {
             AddToClassList("bt-tabbar");
 
-            _leftArrow = MakeButton("‹", "bt-tabbar__arrow", () => ScrollBy(-ScrollStep));
+            _leftArrow = new Button(() => ScrollBy(-ScrollStep)) { text = "‹" };
+            _leftArrow.AddToClassList("bt-tabbar__arrow");
             Add(_leftArrow);
 
             _scroll = new ScrollView(ScrollViewMode.Horizontal);
@@ -71,84 +66,17 @@ namespace BetterTabs
             _row.RegisterCallback<PointerUpEvent>(OnRowPointerUp);
             _scroll.Add(_row);
 
-            _rightArrow = MakeButton("›", "bt-tabbar__arrow", () => ScrollBy(ScrollStep));
+            _rightArrow = new Button(() => ScrollBy(ScrollStep)) { text = "›" };
+            _rightArrow.AddToClassList("bt-tabbar__arrow");
             Add(_rightArrow);
 
-            _unitySearchBtn = MakeButton(null, null, () => UnitySearchClicked?.Invoke());
-            _unitySearchBtn.tooltip = "Open Unity Search";
-            _unitySearchBtn.style.display = DisplayStyle.None;
-            Texture2D advIcon = EditorGUIUtility.FindTexture("d_SearchWindow");
-            if (advIcon == null) advIcon = EditorGUIUtility.FindTexture("d_ViewToolZoom");
-            if (advIcon != null) _unitySearchBtn.style.backgroundImage = Background.FromTexture2D(advIcon);
-            else _unitySearchBtn.text = "⊚";
-            Add(_unitySearchBtn);
-
-            // Search: a magnifier that expands a field to its left when toggled.
-            _searchField = new TextField();
-            _searchField.AddToClassList("bt-search");
-            _searchField.RegisterValueChangedCallback(e => SearchChanged?.Invoke(e.newValue));
-            _searchField.RegisterCallback<KeyDownEvent>(evt =>
-            {
-                if (evt.keyCode == KeyCode.Escape) CloseSearch();
-            });
-            Add(_searchField);
-
-            _searchBtn = MakeButton(null, null, ToggleSearch);
-            _searchBtn.tooltip = "Search all assets";
-            Texture2D magnifier = EditorGUIUtility.FindTexture("d_Search Icon");
-            if (magnifier != null) _searchBtn.style.backgroundImage = Background.FromTexture2D(magnifier);
-            else _searchBtn.text = "⌕";
-            Add(_searchBtn);
-
-            _viewBtn = MakeButton(null, null, () => ViewToggleClicked?.Invoke());
-            Add(_viewBtn);
-
-            _addBtn = MakeButton("+", null, () => AddClicked?.Invoke());
+            _addBtn = new Button(() => AddClicked?.Invoke()) { text = "+" };
+            _addBtn.AddToClassList("bt-tabbar__add");
             _addBtn.tooltip = "Add tab from current selection";
             Add(_addBtn);
 
-            _pingBtn = MakeButton(null, null, () => PingClicked?.Invoke());
-            _pingBtn.tooltip = "Ping in Hierarchy / Project";
-            Add(_pingBtn);
-
-            _panelBtn = MakeButton(null, null, () => PanelToggleClicked?.Invoke());
-            Add(_panelBtn);
-
             RegisterCallback<GeometryChangedEvent>(_ => UpdateArrows());
             _scroll.horizontalScroller.valueChanged += _ => UpdateArrows();
-        }
-
-        Button MakeButton(string text, string extraClass, Action onClick)
-        {
-            Button b = new Button(onClick);
-            b.AddToClassList("bt-tabbar__btn");
-            if (!string.IsNullOrEmpty(extraClass)) b.AddToClassList(extraClass);
-            if (text != null) b.text = text;
-            return b;
-        }
-
-        public void ToggleSearch()
-        {
-            if (_searchField.ClassListContains("bt-search--open")) CloseSearch();
-            else OpenSearch();
-        }
-
-        void OpenSearch()
-        {
-            _searchField.AddToClassList("bt-search--open");
-            _unitySearchBtn.style.display = DisplayStyle.Flex;
-            _searchField.schedule.Execute(() => _searchField.Q("unity-text-input")?.Focus());
-        }
-
-        public void CloseSearch()
-        {
-            _searchField.RemoveFromClassList("bt-search--open");
-            _unitySearchBtn.style.display = DisplayStyle.None;
-            if (!string.IsNullOrEmpty(_searchField.value))
-            {
-                _searchField.SetValueWithoutNotify("");
-                SearchChanged?.Invoke("");
-            }
         }
 
         // ── Data ──────────────────────────────────────────────────────────────
@@ -161,36 +89,9 @@ namespace BetterTabs
             Rebuild();
         }
 
-        public void SetButtonState(bool canAdd, bool showPing, bool panelOpen,
-            bool showView, bool gridView)
+        public void SetAddEnabled(bool canAdd)
         {
             _addBtn.SetEnabled(canAdd);
-
-            _viewBtn.style.display = showView ? DisplayStyle.Flex : DisplayStyle.None;
-            if (showView)
-            {
-                Texture2D viewIcon = EditorGUIUtility.FindTexture(
-                    gridView ? "d_UnityEditor.ConsoleWindow" : "d_GridLayoutGroup Icon");
-                if (viewIcon != null) _viewBtn.style.backgroundImage = Background.FromTexture2D(viewIcon);
-                else _viewBtn.text = gridView ? "≡" : "⊞";
-                _viewBtn.tooltip = gridView ? "List view" : "Grid view";
-            }
-
-            _pingBtn.style.display = showPing ? DisplayStyle.Flex : DisplayStyle.None;
-            if (showPing && _pingBtn.style.backgroundImage.value.texture == null)
-            {
-                Texture2D pingIcon = EditorGUIUtility.IconContent("d_SearchJump Icon").image as Texture2D;
-                if (pingIcon != null) _pingBtn.style.backgroundImage = Background.FromTexture2D(pingIcon);
-                else _pingBtn.text = "⊙";
-            }
-
-            if (_panelBtn.style.backgroundImage.value.texture == null)
-            {
-                Texture2D panelIcon = EditorGUIUtility.FindTexture("d_Project");
-                if (panelIcon != null) _panelBtn.style.backgroundImage = Background.FromTexture2D(panelIcon);
-                else _panelBtn.text = panelOpen ? "◁" : "▷";
-            }
-            _panelBtn.tooltip = panelOpen ? "Hide Project Panel" : "Show Project Panel";
         }
 
         // Highlights the bar while an asset drag hovers the window.
@@ -199,10 +100,96 @@ namespace BetterTabs
             EnableInClassList("bt-tabbar--drophint", active);
         }
 
+        // Used to anchor the colour picker under the tab it belongs to.
+        public Rect GetTabWorldBound(int index)
+        {
+            return index >= 0 && index < _row.childCount ? _row[index].worldBound : worldBound;
+        }
+
+        // Keeps the active tab inside the viewport after any selection change.
         public void ScrollToSelected()
         {
             if (_selectedIndex < 0 || _selectedIndex >= _row.childCount) return;
-            schedule.Execute(() => _scroll.ScrollTo(_row[_selectedIndex]));
+            VisualElement target = _row[_selectedIndex];
+
+            // SetTabs rebuilt the row, so the tab usually has no layout yet and
+            // ScrollTo would silently do nothing. Scroll on the geometry pass that
+            // finally measures it instead of hoping one frame is enough.
+            if (IsMeasured(target))
+            {
+                ScrollToTab(target);
+                return;
+            }
+
+            EventCallback<GeometryChangedEvent> once = null;
+            once = _ =>
+            {
+                target.UnregisterCallback(once);
+                ScrollToTab(target);
+            };
+            target.RegisterCallback(once);
+        }
+
+        static bool IsMeasured(VisualElement el) =>
+            !float.IsNaN(el.layout.width) && el.layout.width > 0f;
+
+        // Eased rather than instant: ScrollView.ScrollTo snaps, and cycling tabs with
+        // Shift+Scroll then reads as the whole bar jumping under the cursor.
+        void ScrollToTab(VisualElement target)
+        {
+            if (target.panel == null) return;
+            AnimateScrollTo(ScrollOffsetFor(target));
+        }
+
+        void AnimateScrollTo(float to)
+        {
+            // Interrupt whatever is still gliding, so two quick selections do not fight.
+            if (_scrollAnim != null)
+            {
+                _scrollAnim.Stop();
+                _scrollAnim = null;
+            }
+
+            float from = _scroll.horizontalScroller.value;
+            if (Mathf.Abs(to - from) < 0.5f)
+            {
+                UpdateArrows();
+                return;
+            }
+
+            // KeepAlive is required, not cosmetic: UI Toolkit pools animation objects
+            // and recycles them on completion, and Stop() on a recycled one throws.
+            // Clearing the field when it finishes is what keeps the pair consistent;
+            // the identity check stops a late completion from clearing a newer one.
+            ValueAnimation<float> anim = null;
+            anim = experimental.animation
+                .Start(from, to, ScrollAnimMs, (_, value) => _scroll.horizontalScroller.value = value)
+                .Ease(Easing.OutCubic)
+                .KeepAlive();
+            anim.OnCompleted(() =>
+            {
+                if (_scrollAnim == anim) _scrollAnim = null;
+            });
+            _scrollAnim = anim;
+        }
+
+        // Smallest offset that brings the tab fully inside the viewport; an already
+        // visible tab keeps the current offset, so no animation runs.
+        float ScrollOffsetFor(VisualElement target)
+        {
+            float value = _scroll.horizontalScroller.value;
+            float viewport = _scroll.contentViewport.layout.width;
+            if (float.IsNaN(viewport) || viewport <= 0f) return value;
+
+            float x = target.layout.x + _row.layout.x;
+            float width = target.layout.width;
+
+            float wanted = value;
+            if (x < value) wanted = x;
+            else if (x + width > value + viewport) wanted = x + width - viewport;
+
+            return Mathf.Clamp(wanted, _scroll.horizontalScroller.lowValue,
+                _scroll.horizontalScroller.highValue);
         }
 
         void Rebuild()
@@ -225,6 +212,10 @@ namespace BetterTabs
             {
                 Image img = new Image { image = icon, scaleMode = ScaleMode.ScaleToFit };
                 img.AddToClassList("bt-tab__icon");
+                // A colour the user picked outranks the type colour; with no pick, the
+                // type colour is what tells a folder tab from a scene or a prefab.
+                img.tintColor = BetterTabColors.GetTint(tab.colorIndex,
+                    BetterAssetTypeColors.TintFor(tab));
                 el.Add(img);
             }
 
@@ -232,8 +223,10 @@ namespace BetterTabs
             label.AddToClassList("bt-tab__label");
             el.Add(label);
 
+            // Revealed by USS only while its tab is hovered, so an idle bar stays quiet.
             Button close = new Button(() => TabClosed?.Invoke(IndexOfElement(el))) { text = "×" };
             close.AddToClassList("bt-tab__close");
+            close.tooltip = "Close tab";
             el.Add(close);
 
             el.RegisterCallback<PointerDownEvent>(evt => OnTabPointerDown(evt, el));
@@ -416,10 +409,12 @@ namespace BetterTabs
 
         // ── Overflow arrows ───────────────────────────────────────────────────
 
+        // Same easing as the scroll-into-view, so the two ways of moving the bar do not
+        // behave differently.
         void ScrollBy(float delta)
         {
-            _scroll.horizontalScroller.value += delta;
-            UpdateArrows();
+            AnimateScrollTo(Mathf.Clamp(_scroll.horizontalScroller.value + delta,
+                _scroll.horizontalScroller.lowValue, _scroll.horizontalScroller.highValue));
         }
 
         void UpdateArrows()

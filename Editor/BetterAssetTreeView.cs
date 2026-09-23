@@ -13,7 +13,7 @@ namespace BetterTabs
     // (rename, drag out to the editor, context menu, drop into folders).
     internal class BetterAssetTreeView : VisualElement
     {
-        const float RowHeight = 18f;
+        const float RowHeight = 24f;
         const float DragThreshold = 4f;
 
         readonly bool _showTypeColumn;
@@ -33,6 +33,15 @@ namespace BetterTabs
         bool _pressed;
         bool _dragStarted;
 
+        // Supplies the palette index tagged onto a path, so a coloured tab shows the
+        // same tint on the rows that point at it. Null means nothing is tagged.
+        public Func<string, int> TabColorProvider;
+
+        // Alternative to tinting the icon: supplies the colour a row's background is
+        // washed with, already carrying its alpha. Transparent means no wash. A tree
+        // sets one provider or the other, never both.
+        public Func<string, Color> RowBackgroundProvider;
+
         public event Action<string> ItemSelected;
         public event Action<string> ItemActivated;
         public event Action<List<string>> ItemsDragged;
@@ -41,6 +50,7 @@ namespace BetterTabs
         public BetterAssetTreeView(bool multiSelect, bool showTypeColumn, bool showAddButton)
         {
             style.flexGrow = 1;
+            AddToClassList("bt-tree");
             _showTypeColumn = showTypeColumn;
             _showAddButton = showAddButton;
 
@@ -173,6 +183,14 @@ namespace BetterTabs
             Button add = row.Q<Button>(className: "bt-row__add");
 
             icon.image = AssetDatabase.GetCachedIcon(path);
+            // All three are assigned unconditionally: rows are recycled, so an untagged
+            // path has to actively clear what the last one left behind. A colour the
+            // user picked for a tab outranks the per-type colour.
+            icon.tintColor = BetterTabColors.GetTint(
+                TabColorProvider == null ? BetterTabColors.None : TabColorProvider(path),
+                BetterAssetTypeColors.TintForPath(path));
+            row.EnableInClassList("bt-row--deprecated", BetterAssetTypeColors.IsDeprecated(path));
+            ApplyRowBackground(row, path);
 
             bool renaming = path == _renamingPath;
             label.style.display = renaming ? DisplayStyle.None : DisplayStyle.Flex;
@@ -244,6 +262,30 @@ namespace BetterTabs
         {
             if (string.IsNullOrEmpty(path) || !_pathToId.TryGetValue(path, out int id)) return;
             _tree.SetSelectionByIdWithoutNotify(new[] { id });
+        }
+
+        // A left-to-right alpha ramp in the row's colour, strongest at its left edge.
+        // The gradient texture is white, so one texture covers the whole palette and
+        // the per-row tint multiplies through it.
+        void ApplyRowBackground(VisualElement row, string path)
+        {
+            Color tint = RowBackgroundProvider == null ? Color.clear : RowBackgroundProvider(path);
+            if (tint.a <= 0f)
+            {
+                row.style.backgroundImage = StyleKeyword.None;
+                return;
+            }
+
+            row.style.backgroundImage = Background.FromTexture2D(BetterTabColors.RowGradient);
+            row.style.backgroundSize = new BackgroundSize(Length.Percent(100), Length.Percent(100));
+            row.style.unityBackgroundImageTintColor = tint;
+        }
+
+        // Re-binds the visible rows without rebuilding the tree: enough for a colour
+        // change, which touches nothing structural.
+        public void RefreshRows()
+        {
+            _tree.RefreshItems();
         }
 
         public void SetHighlight(string path)

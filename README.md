@@ -22,6 +22,11 @@ BetterTabs keeps those folders one click away, with the same interactions you al
 | | |
 |---|---|
 | **Pinned tabs** | Drag folders or assets in, reorder by dragging, close with `×` |
+| **Tab colours** | Right-click a tab → **Color…** for a swatch popup; tints the tab icon |
+| **Breadcrumb** | Clickable path of the active tab in the toolbar |
+| **Type-coloured icons** | Folder, scene, script, prefab and data assets each get their own tint |
+| **Status bar** | Item count and full path at the bottom of the window |
+| **Coloured folders** | A tagged folder washes its row in the project panel, its subtree in a darker shade |
 | **Tree view** | Expandable folders with child count, icons, and type labels |
 | **Grid view** | Asset previews at 64×64, toggle in the toolbar |
 | **Scoped search** | Search is contained to the active tab's folder |

@@ -23,6 +23,7 @@ namespace BetterTabs
                     path = tab.path,
                     globalObjectId = tab.globalObjectId,
                     name = tab.name,
+                    colorIndex = tab.colorIndex,
                     expandedPaths = new List<string>(tab.expandedPaths),
                     searchQuery = tab.searchQuery ?? "",
                     hierarchySelectionPath = tab.hierarchySelectionPath ?? "",
@@ -76,6 +77,7 @@ namespace BetterTabs
                     entry = new BetterTabEntry(snap.path);
                 }
 
+                entry.colorIndex = BetterTabColors.Normalize(snap.colorIndex);
                 entry.expandedPaths = snap.expandedPaths ?? new List<string>();
                 entry.searchQuery = snap.searchQuery ?? "";
                 entry.hierarchySelectionPath = snap.hierarchySelectionPath ?? "";

@@ -27,7 +27,7 @@ namespace BetterTabs
 
             Space();
             Section("Closing Tabs");
-            Row("× button",                       "Click the × on any tab to close it");
+            Row("× button",                       "Hover a tab to reveal its ×, then click to close");
             Row("Ctrl + W",                       "Close the active tab");
             Row("Right-click tab → Close Others", "Close every tab except the one you right-clicked");
 
@@ -47,10 +47,20 @@ namespace BetterTabs
             Row("Ctrl + Shift + Scroll Wheel",    "Move the active tab one position left or right");
 
             Space();
+            Section("Colouring Tabs");
+            Row("Right-click tab -> Color...",    "Opens a swatch popup and tints the tab icon");
+            Row("Project panel",                  "The tagged folder's row is washed with the colour, its subtree darker");
+            Row("x swatch",                       "Clears the colour and restores the default look");
+            Row("Edit -> Shortcuts",              "Bind 'BetterTabs/Set Tab Color' to open the popup on the active tab");
+
+            Space();
             Section("Browsing Content");
-            Row("Search bar",                     "Type to filter assets inside the active folder tab");
-            Row("× in search bar",                "Clear the current search");
+            Row("Breadcrumb",                     "Click any segment of the path to open that folder as a tab");
+            Row("Search bar",                     "Searches the whole project; Unity filter syntax works (t:, l:)");
+            Row("Escape in search bar",           "Clear the current search");
             Row("Grid / List toggle",             "Switch between grid and list view (folder tabs only)");
+            Row("Panel button (far left)",        "Show or hide the project panel");
+            Row("⋯ overflow menu",                "Unity Search, Settings, How to Use");
             Row("Double-click folder",            "Open that folder as a new tab (grid view)");
             Row("Right-click asset",              "Context menu: Open, Show in Project, Rename, Delete…");
 
@@ -58,6 +68,7 @@ namespace BetterTabs
             Section("Asset Pinning");
             Row("Pin any asset",                  "Drag a non-folder asset onto the window to pin it");
             Row("Pinned asset view",              "Shows a preview with Open / Show in Project / Reveal in Explorer buttons");
+            Row("Click a reference",               "Selects that asset in the left panel - here or in Unity's Inspector");
 
             EditorGUILayout.Space(12);
             EditorGUILayout.EndScrollView();

@@ -11,6 +11,7 @@ namespace BetterTabs
         public string path;             // For Folder/Asset/Prefab
         public string globalObjectId;   // For SceneObject
         public string name;
+        public int colorIndex;
         public List<string> expandedPaths = new List<string>();
         public string searchQuery = "";
         public string hierarchySelectionPath = "";

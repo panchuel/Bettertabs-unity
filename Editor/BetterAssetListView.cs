@@ -16,7 +16,7 @@ namespace BetterTabs
 
         const float DragThreshold = 4f;
 
-        readonly Label _header;
+        readonly VisualElement _header;
         readonly ScrollView _scroll;
         readonly VisualElement _items;
 
@@ -42,9 +42,13 @@ namespace BetterTabs
         {
             style.flexGrow = 1;
 
-            _header = new Label();
+            // Column header, list mode only. The result count the search used to put
+            // here now lives in the window status bar, where it does not steal a row.
+            _header = new VisualElement();
             _header.AddToClassList("bt-list__header");
             _header.style.display = DisplayStyle.None;
+            _header.Add(MakeColumn("NAME", "bt-list__col--name"));
+            _header.Add(MakeColumn("TYPE", "bt-list__col--type"));
             Add(_header);
 
             _scroll = new ScrollView(ScrollViewMode.Vertical);
@@ -55,16 +59,23 @@ namespace BetterTabs
             _scroll.Add(_items);
         }
 
+        static Label MakeColumn(string text, string modifier)
+        {
+            Label column = new Label(text);
+            column.AddToClassList("bt-list__col");
+            column.AddToClassList(modifier);
+            return column;
+        }
+
         // ── Data ──────────────────────────────────────────────────────────────
 
-        public void SetItems(IReadOnlyList<string> paths, Mode mode, string headerText = null)
+        public void SetItems(IReadOnlyList<string> paths, Mode mode)
         {
             _paths.Clear();
             if (paths != null) _paths.AddRange(paths);
             _mode = mode;
 
-            _header.text = headerText;
-            _header.style.display = string.IsNullOrEmpty(headerText) ? DisplayStyle.None : DisplayStyle.Flex;
+            _header.style.display = mode == Mode.List ? DisplayStyle.Flex : DisplayStyle.None;
 
             _items.EnableInClassList("bt-list__items--grid", mode == Mode.Grid);
             _items.EnableInClassList("bt-list__items--list", mode == Mode.List);
@@ -96,12 +107,16 @@ namespace BetterTabs
             item.AddToClassList("bt-item");
             item.AddToClassList(_mode == Mode.Grid ? "bt-item--grid" : "bt-item--row");
             if (path == _selectedPath) item.AddToClassList("bt-item--selected");
-            if (_mode == Mode.List && index % 2 == 0) item.AddToClassList("bt-item--odd");
+            if (_mode == Mode.List && index % 2 == 1) item.AddToClassList("bt-item--odd");
+            if (BetterAssetTypeColors.IsDeprecated(path)) item.AddToClassList("bt-item--dim");
             item.tooltip = path;
 
             Image icon = new Image { scaleMode = ScaleMode.ScaleToFit };
             icon.AddToClassList(_mode == Mode.Grid ? "bt-item__preview" : "bt-item__icon");
-            icon.image = IconFor(path, isFolder);
+            // A rendered preview carries its own colours; only the fallback type icon
+            // is tinted, so a material thumbnail never comes out washed in gold.
+            icon.image = IconFor(path, isFolder, out bool isTypeIcon);
+            if (isTypeIcon) icon.tintColor = BetterAssetTypeColors.TintForPath(path);
             item.Add(icon);
 
             Label label = new Label();
@@ -135,14 +150,20 @@ namespace BetterTabs
             return item;
         }
 
-        static Texture2D IconFor(string path, bool isFolder)
+        static Texture2D IconFor(string path, bool isFolder, out bool isTypeIcon)
         {
+            isTypeIcon = true;
             if (isFolder) return EditorGUIUtility.FindTexture("Folder Icon");
 
             // Grid cells prefer the rendered preview; fall back to the type icon.
             Texture2D preview = AssetPreview.GetAssetPreview(
                 AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
-            return preview != null ? preview : AssetDatabase.GetCachedIcon(path) as Texture2D;
+            if (preview != null)
+            {
+                isTypeIcon = false;
+                return preview;
+            }
+            return AssetDatabase.GetCachedIcon(path) as Texture2D;
         }
 
         // ── Interaction ───────────────────────────────────────────────────────

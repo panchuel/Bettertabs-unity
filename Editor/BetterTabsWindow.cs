@@ -64,11 +64,14 @@ namespace BetterTabs
         // ── Project panel ─────────────────────────────────────────────────────
         bool _projectPanelOpen;
         float _splitterX = 220f;
+        BetterSplitterTracker _projectSplitter;
         BetterAssetTreeView _projectTree;
         Object _lastSyncedSelection;
 
         // ── UI Toolkit ────────────────────────────────────────────────────────
         BetterTabsBarView _tabBar;
+        BetterTabsToolbarView _toolbar;
+        Label _statusBar;
         IMGUIContainer _rightContainer;
         BetterAssetTreeView _contentTree;
         BetterAssetInspectorView _assetInspector;
@@ -161,11 +164,16 @@ namespace BetterTabs
             EditorApplication.projectChanged += OnProjectChanged;
             Selection.selectionChanged += OnUnitySelectionChanged;
             EditorApplication.update += OnEditorUpdate;
+
+            // Reference clicks made in Unity's own Inspector land here too, so the
+            // left panel follows wherever the user is reading the object from.
+            BetterNativeInspectorLink.Enable(RevealInProjectPanel);
         }
 
         void OnDisable()
         {
             s_instance = null;
+            BetterNativeInspectorLink.Disable();
             EditorApplication.projectChanged -= OnProjectChanged;
             Selection.selectionChanged -= OnUnitySelectionChanged;
             EditorApplication.update -= OnEditorUpdate;
@@ -178,6 +186,13 @@ namespace BetterTabs
             EditorPrefs.SetFloat(SplitterXKey, CurrentSplitterX());
             if (_goView != null)
                 EditorPrefs.SetFloat(HierarchySplitterKey, _goView.CurrentSplitterX());
+            // Straight from the view rather than from the mirror kept by its events,
+            // for the same reason the splitters are: the live owner is the authority.
+            if (_assetInspector != null)
+            {
+                _previewHeight = _assetInspector.CurrentPreviewHeight;
+                _previewCollapsed = _assetInspector.IsPreviewCollapsed;
+            }
             EditorPrefs.SetFloat(PreviewHeightKey, _previewHeight);
             EditorPrefs.SetBool(PreviewCollapsedKey, _previewCollapsed);
             if (_projectTree != null)
@@ -193,6 +208,9 @@ namespace BetterTabs
         // custom window depending on context, so also watch the selection each tick.
         void OnEditorUpdate()
         {
+            // Picks up Inspector windows opened, docked or rebuilt since the last scan.
+            BetterNativeInspectorLink.Tick();
+
             // Both run here rather than while drawing: swapping the tree in or out
             // modifies the visual hierarchy, which throws during an IMGUI layout pass,
             // and the right IMGUI container is hidden in tree mode so it would never
@@ -245,6 +263,8 @@ namespace BetterTabs
         void CreateGUI()
         {
             VisualElement root = rootVisualElement;
+            // Carries the design tokens every other rule reads through var().
+            root.AddToClassList("bt-root");
             root.style.flexGrow = 1;
             // TrickleDown: seen before the trees, which consume plain arrow keys.
             root.RegisterCallback<WheelEvent>(OnRootWheel, TrickleDown.TrickleDown);
@@ -259,19 +279,26 @@ namespace BetterTabs
             _tabBar.TabContextMenu += ShowTabContextMenu;
             _tabBar.TabMoved += OnTabMoved;
             _tabBar.AddClicked += AddTabFromSelection;
-            _tabBar.PingClicked += () => PingTab(_selectedIndex);
-            _tabBar.PanelToggleClicked += ToggleProjectPanel;
-            _tabBar.SearchChanged += OnSearchChanged;
-            _tabBar.UnitySearchClicked += OpenUnitySearchWindow;
-            _tabBar.ViewToggleClicked += () =>
-            {
-                _gridView = !_gridView;
-                UpdateTabBarButtons();
-            };
             // Dropping assets on the bar creates tabs (was IMGUI DragPerform before).
             _tabBar.RegisterCallback<DragUpdatedEvent>(OnTabBarDragUpdated);
             _tabBar.RegisterCallback<DragPerformEvent>(OnTabBarDragPerform);
             root.Add(_tabBar);
+
+            _toolbar = new BetterTabsToolbarView();
+            _toolbar.SearchChanged += OnSearchChanged;
+            _toolbar.CrumbClicked += OnBreadcrumbClicked;
+            _toolbar.FocusClicked += () => PingTab(_selectedIndex);
+            _toolbar.PanelToggleClicked += ToggleProjectPanel;
+            _toolbar.UnitySearchClicked += OpenUnitySearchWindow;
+            _toolbar.SettingsClicked += BetterTabsSettingsWindow.Open;
+            _toolbar.HelpClicked += BetterTabsHowToUseWindow.Open;
+            _toolbar.ViewModeChanged += grid =>
+            {
+                if (_gridView == grid) return;
+                _gridView = grid;
+                UpdateTabBarButtons();
+            };
+            root.Add(_toolbar);
 
             // Left/right panels split by a native TwoPaneSplitView (replaces the
             // hand-rolled splitter). Child 0 is the collapsible project panel.
@@ -281,16 +308,24 @@ namespace BetterTabs
             _projectTree = new BetterAssetTreeView(multiSelect: true, showTypeColumn: false, showAddButton: true);
             _projectTree.Rebuild();
             _projectTree.style.minWidth = MinPanelW;
+            _projectTree.AddToClassList("bt-panel");
             _projectTree.ItemSelected += OnProjectPanelItemClicked;
             _projectTree.ItemActivated += AddOrSelectTab;
             _projectTree.ItemsDragged += OnAssetDragged;
             _projectTree.RefreshRequested += RequestRefresh;
+            _projectTree.RowBackgroundProvider = GetRowBackgroundTint;
             _projectTree.LoadExpandedState(EditorPrefs.GetString(ProjectExpandedKey, ""));
             _splitView.Add(_projectTree);
+
+            // Built only once the pane it watches exists. Same reason as the hierarchy
+            // pane: a collapsed panel measures 0 and a narrow window squeezes this one,
+            // so only a drag of the divider is recorded as a chosen width.
+            _projectSplitter = new BetterSplitterTracker(_splitView, _projectTree, _splitterX);
 
             // Right pane: search toolbar on top, then either the native content tree
             // or the remaining IMGUI views (asset pin, prefab, grid, search results).
             _rightPane = new VisualElement();
+            _rightPane.AddToClassList("bt-content");
             _rightPane.style.flexGrow = 1;
             _rightPane.style.minWidth = MinPanelW;
 
@@ -299,10 +334,12 @@ namespace BetterTabs
             _contentTree.ItemActivated += BetterTabsInteractionHandler.OpenAsset;
             _contentTree.ItemsDragged += OnAssetDragged;
             _contentTree.RefreshRequested += RequestRefresh;
+            _contentTree.TabColorProvider = GetTabColorForPath;
             _rightPane.Add(_contentTree);
 
             _assetInspector = new BetterAssetInspectorView();
             _assetInspector.OpenRequested += BetterTabsInteractionHandler.OpenAsset;
+            _assetInspector.AssetReferenceClicked += RevealInProjectPanel;
             _assetInspector.PreviewHeightChanged += h =>
             {
                 _previewHeight = h;
@@ -334,6 +371,11 @@ namespace BetterTabs
             _splitView.Add(_rightPane);
 
             root.Add(_splitView);
+
+            _statusBar = new Label();
+            _statusBar.AddToClassList("bt-status");
+            root.Add(_statusBar);
+
             // Deferred: the split view must resolve its layout before it can collapse.
             _splitView.schedule.Execute(ApplyProjectPanelVisibility);
 
@@ -357,9 +399,7 @@ namespace BetterTabs
         // Live width of the project panel, so the split position persists across sessions.
         float CurrentSplitterX()
         {
-            if (_projectTree == null) return _splitterX;
-            float w = _projectTree.resolvedStyle.width;
-            return (w > 0f && !float.IsNaN(w)) ? w : _splitterX;
+            return _projectSplitter != null ? _projectSplitter.Width : _splitterX;
         }
 
         // Collapsing child 0 hides the project panel together with its splitter handle.
@@ -394,9 +434,7 @@ namespace BetterTabs
 
             if (searching)
             {
-                IReadOnlyList<string> results = _search.Results;
-                string header = $"{results.Count} result{(results.Count == 1 ? "" : "s")}";
-                _assetList.SetItems(results, BetterAssetListView.Mode.List, header);
+                _assetList.SetItems(_search.Results, BetterAssetListView.Mode.List);
             }
             else
             {
@@ -475,6 +513,7 @@ namespace BetterTabs
             _goView = new BetterGameObjectView(EditorPrefs.GetFloat(HierarchySplitterKey, 220f));
             _goView.SelectionChanged += OnHierarchySelectionChanged;
             _goView.ValueChanged += OnGameObjectEdited;
+            _goView.AssetReferenceClicked += RevealInProjectPanel;
             _rightPane.Add(_goView);
         }
 
@@ -671,18 +710,100 @@ namespace BetterTabs
             // No tab owns the panel during a search, so none is drawn as active.
             _tabBar.SetTabs(_tabs, _search.IsSearching ? -1 : _selectedIndex);
             UpdateTabBarButtons();
+            // Closing or adding a tab changes which rows are tinted, not just picking
+            // a colour does, so the trees are re-bound from the same place.
+            _projectTree?.RefreshRows();
+            _contentTree?.RefreshRows();
         }
 
         void UpdateTabBarButtons()
         {
             if (_tabBar == null) return;
-            bool showPing = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
+            _tabBar.SetAddEnabled(CanAddSelection());
+
+            if (_toolbar == null) return;
+            // A hierarchy tab swaps the search box for the action that fits it.
+            bool showFocus = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
                 && (_tabs[_selectedIndex].kind == BetterTabKind.SceneObject
                     || _tabs[_selectedIndex].kind == BetterTabKind.Prefab);
             // The view toggle only applies to folder tabs that are not showing search.
             bool showView = _tabs.Count > 0 && ActiveTabIsFolder() && !_search.IsSearching;
-            _tabBar.SetButtonState(CanAddSelection(), showPing, _projectPanelOpen,
-                showView, _gridView);
+
+            _toolbar.SetState(!showFocus, showView, _gridView, showFocus, _projectPanelOpen);
+            UpdateBreadcrumb();
+            UpdateStatusBar();
+        }
+
+        // Walkable path of the active tab: every segment but the last opens that
+        // folder. A search or a scene object has no path to walk, so it shows one crumb.
+        void UpdateBreadcrumb()
+        {
+            if (_toolbar == null) return;
+
+            if (_search.IsSearching)
+            {
+                _toolbar.SetBreadcrumb(new List<string> { "Search results" }, null);
+                return;
+            }
+            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count)
+            {
+                _toolbar.SetBreadcrumb(null, null);
+                return;
+            }
+
+            BetterTabEntry tab = _tabs[_selectedIndex];
+            if (tab.kind == BetterTabKind.SceneObject || string.IsNullOrEmpty(tab.path))
+            {
+                _toolbar.SetBreadcrumb(new List<string> { tab.name }, null);
+                return;
+            }
+
+            string[] parts = tab.path.Split('/');
+            List<string> labels = new List<string>(parts.Length);
+            List<string> paths = new List<string>(parts.Length);
+            string running = "";
+            for (int i = 0; i < parts.Length; i++)
+            {
+                running = i == 0 ? parts[0] : running + "/" + parts[i];
+                labels.Add(parts[i]);
+                paths.Add(running);
+            }
+            _toolbar.SetBreadcrumb(labels, paths);
+        }
+
+        void OnBreadcrumbClicked(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !AssetDatabase.IsValidFolder(path)) return;
+            AddOrSelectTab(path);
+        }
+
+        void UpdateStatusBar()
+        {
+            if (_statusBar == null) return;
+
+            if (_search.IsSearching)
+            {
+                int hits = _search.Results.Count;
+                _statusBar.text = $"{hits} result{(hits == 1 ? "" : "s")} · {_search.CommittedQuery}";
+                return;
+            }
+
+            string path = ActiveTabPath();
+            if (string.IsNullOrEmpty(path))
+            {
+                _statusBar.text = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
+                    ? _tabs[_selectedIndex].name : "";
+                return;
+            }
+
+            if (!ActiveTabIsFolder())
+            {
+                _statusBar.text = path;
+                return;
+            }
+
+            int count = FolderContents(path).Count;
+            _statusBar.text = $"{count} item{(count == 1 ? "" : "s")} · {path}";
         }
 
         bool CanAddSelection()
@@ -716,7 +837,9 @@ namespace BetterTabs
             _projectPanelOpen = !_projectPanelOpen;
             if (_projectPanelOpen)
             {
-                _projectTree.Rebuild();
+                // Guarded like every other use of the tree in this class: the toolbar
+                // button exists before CreateGUI has finished building the panels.
+                _projectTree?.Rebuild();
                 SyncProjectTreeHighlight();
             }
             ApplyProjectPanelVisibility();
@@ -747,8 +870,72 @@ namespace BetterTabs
             menu.AddItem(new GUIContent("Close"), false, () => RemoveTab(index));
             menu.AddItem(new GUIContent("Close Others"), false, () => CloseOthers(index));
             menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Color…"), false, () => ShowTabColorPicker(index));
+            menu.AddSeparator("");
             menu.AddItem(new GUIContent("Open in Project"), false, () => PingTab(index));
             menu.ShowAsContext();
+        }
+
+        void ShowTabColorPicker(int index)
+        {
+            if (index < 0 || index >= _tabs.Count) return;
+            BetterTabColorPicker.Show(rootVisualElement, _tabBar.GetTabWorldBound(index),
+                _tabs[index].colorIndex, colorIndex => SetTabColor(index, colorIndex));
+        }
+
+        void SetTabColor(int index, int colorIndex)
+        {
+            if (index < 0 || index >= _tabs.Count) return;
+            if (_tabs[index].colorIndex == colorIndex) return;
+
+            _tabs[index].colorIndex = colorIndex;
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
+            RefreshTabBar();
+            Repaint();
+        }
+
+        // Left panel: the tagged folder's row is washed with its colour, and every row
+        // beneath it takes a darker, fainter shade of the same one. Where tags nest,
+        // the deepest one wins, so a tagged subfolder overrides the tag above it.
+        Color GetRowBackgroundTint(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return Color.clear;
+
+            int color = BetterTabColors.None;
+            int matchedLength = -1;
+            bool isTaggedRow = false;
+
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                BetterTabEntry tab = _tabs[i];
+                if (tab.kind == BetterTabKind.SceneObject) continue;
+                if (string.IsNullOrEmpty(tab.path)) continue;
+                if (!BetterTabColors.IsColored(tab.colorIndex)) continue;
+                if (tab.path.Length <= matchedLength) continue;
+
+                bool exact = path == tab.path;
+                if (!exact && !path.StartsWith(tab.path + "/")) continue;
+
+                color = tab.colorIndex;
+                matchedLength = tab.path.Length;
+                isTaggedRow = exact;
+            }
+
+            return BetterTabColors.GetRowTint(color, isTaggedRow);
+        }
+
+        // The colour is a property of the tab, so a tree row picks it up by matching
+        // its path. Scene object tabs have no path and never tint a row.
+        int GetTabColorForPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return BetterTabColors.None;
+
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                if (_tabs[i].kind == BetterTabKind.SceneObject) continue;
+                if (_tabs[i].path == path) return _tabs[i].colorIndex;
+            }
+            return BetterTabColors.None;
         }
 
         // ── Search toolbar ────────────────────────────────────────────────────
@@ -780,6 +967,19 @@ namespace BetterTabs
         {
             if (!_projectPanelOpen || _projectTree == null) return;
             _projectTree.ScrollToPath(path);
+        }
+
+        // Selecting rather than only highlighting: this mirrors what clicking an asset
+        // anywhere else in the window does, so the left panel ends up in one state.
+        // The selection is set even with the panel closed, so opening it is already right.
+        void RevealInProjectPanel(string path)
+        {
+            if (_projectTree == null || string.IsNullOrEmpty(path)) return;
+
+            _projectTree.SetSelectedPath(path);
+            _projectTree.ExpandToPath(path);
+            ScrollProjectPanelToPath(path);
+            Repaint();
         }
 
         // ── Folder drag-drop handling ─────────────────────────────────────────
@@ -981,6 +1181,14 @@ namespace BetterTabs
         static void ReopenClosedTabShortcut(ShortcutArguments args)
         {
             if (args.context is BetterTabsWindow w) w.ReopenClosedTab();
+        }
+
+        // Left unbound on purpose: every free Ctrl/Ctrl+Shift letter is already taken
+        // by Unity itself, so the binding is the user's to pick in Edit ▸ Shortcuts.
+        [Shortcut("BetterTabs/Set Tab Color", typeof(BetterTabsWindow))]
+        static void SetTabColorShortcut(ShortcutArguments args)
+        {
+            if (args.context is BetterTabsWindow w) w.ShowTabColorPicker(w._selectedIndex);
         }
 
         void OnRootWheel(WheelEvent evt)
@@ -1245,6 +1453,7 @@ namespace BetterTabs
         void ClearSearch()
         {
             _searchInputText = "";
+            _toolbar?.ClearSearch();
             _search.Clear();
             if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count)
                 _tabs[_selectedIndex].searchQuery = "";
