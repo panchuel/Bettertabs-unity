@@ -636,22 +636,6 @@
 }
 
 /* ==========================================================================
-   Status bar
-   ========================================================================== */
-.bt-status {
-    height: 24px;
-    flex-shrink: 0;
-    padding-left: 12px;
-    padding-right: 12px;
-    background-color: var(--bg-statusbar);
-    border-top-width: 1px;
-    border-top-color: var(--border-hairline);
-    font-size: 11px;
-    color: var(--text-muted);
-    -unity-text-align: middle-left;
-}
-
-/* ==========================================================================
    Embedded inspector
    ========================================================================== */
 .bt-inspector__header {

@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using UnityEditor;
+using UnityEditor.AssetImporters;
 using UnityEditor.UIElements;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -138,8 +140,7 @@ namespace BetterTabs
             DestroyEditor();
             _inspectorScroll.Clear();
 
-            UnityEngine.Object obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-            if (obj != null) _editor = Editor.CreateEditor(obj);
+            _editor = CreateInspectorFor(path);
 
             Color tint = BetterAssetTypeColors.TintForPath(path);
             _icon.image = AssetDatabase.GetCachedIcon(path);
@@ -166,6 +167,39 @@ namespace BetterTabs
             }
 
             ApplyPreviewLayout();
+        }
+
+        // Unity inspects an asset in one of two ways, and picking the wrong one is why
+        // an .fbx showed nothing here while a .mat showed everything.
+        //
+        // A source file Unity imports (.fbx, .png, .cs, .shader, .wav…) is inspected
+        // through its AssetImporter: ModelImporter gives the Model/Rig/Animation/
+        // Materials UI, TextureImporter the texture settings, and so on. A native asset
+        // (.mat, .asset, .unity) has only the base AssetImporter, whose editor is an
+        // empty GenericInspector, and is inspected through the asset itself.
+        //
+        // Asking for the importer's editor and looking at what comes back is how the
+        // choice gets made without hard-coding a list of extensions that would go stale
+        // the moment a project adds a ScriptedImporter of its own.
+        static Editor CreateInspectorFor(string path)
+        {
+            AssetImporter importer = AssetImporter.GetAtPath(path);
+            if (importer != null)
+            {
+                Editor importerEditor = Editor.CreateEditor(importer);
+                if (importerEditor is AssetImporterEditor) return importerEditor;
+                if (importerEditor != null) UnityEngine.Object.DestroyImmediate(importerEditor);
+            }
+
+            UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+            if (asset == null) return null;
+
+            // MaterialEditor — and any editor honouring this flag — draws nothing at all
+            // while Unity thinks the object's inspector foldout is collapsed, which is
+            // how a material came up as a 4px empty strip. The native Inspector always
+            // shows a single asset expanded, so match it.
+            InternalEditorUtility.SetIsInspectorExpanded(asset, true);
+            return Editor.CreateEditor(asset);
         }
 
         public void DestroyEditor()

@@ -28,8 +28,8 @@ namespace BetterTabs
 
         Transform _root;
         string _selectionPath;
-        string _inspectorKey;
         GameObject _inspectorTarget;
+        bool _hasInspectorTarget;
 
         // Remembers the width the user dragged the divider to. Survives the view
         // being hidden and ignores the squeezes the layout applies on its own.
@@ -280,13 +280,18 @@ namespace BetterTabs
 
         void RefreshInspector(GameObject target)
         {
-            string key = target != null ? target.GetInstanceID().ToString() : "";
-            if (key == _inspectorKey) return;
-            _inspectorKey = key;
+            // Keyed on the reference rather than an id: Object.GetInstanceID is an error
+            // from Unity 6.6 on, and its replacement does not exist on the versions this
+            // package still declares support for. The reference also asks the question
+            // directly — is this the same object the cards were built for?
+            if (_hasInspectorTarget && ReferenceEquals(_inspectorTarget, target)
+                && !IsDestroyed(target))
+                return;
 
-            InvalidateInspectorCache();
-            _inspector.Clear();
+            _hasInspectorTarget = true;
             _inspectorTarget = target;
+
+            _inspector.Clear();
             if (target == null) return;
 
             _inspector.Add(BuildObjectHeader(target));
@@ -435,6 +440,11 @@ namespace BetterTabs
 
         VisualElement MakeEditor(UnityEngine.Object target)
         {
+            // Some editors (MaterialEditor among them) draw nothing while Unity thinks
+            // the object's inspector foldout is collapsed. Each card carries its own
+            // header here, so the native foldout state must not leave one empty.
+            InternalEditorUtility.SetIsInspectorExpanded(target, true);
+
             // Built from the object, not from an Editor we own: InspectorElement then
             // creates and disposes the editor itself. Destroying our own editor here
             // raced with the element disposing its SerializedObject, which threw from
@@ -455,7 +465,15 @@ namespace BetterTabs
         // Forces the next RefreshInspector call to rebuild instead of matching the cache.
         void InvalidateInspectorCache()
         {
-            _inspectorKey = null;
+            _hasInspectorTarget = false;
+        }
+
+        // A destroyed object keeps a live reference that compares equal to null through
+        // Unity's operator, so matching the reference alone would leave cards pointing
+        // at nothing after a prefab is unloaded.
+        static bool IsDestroyed(GameObject target)
+        {
+            return !ReferenceEquals(target, null) && target == null;
         }
     }
 }

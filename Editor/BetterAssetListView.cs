@@ -38,6 +38,10 @@ namespace BetterTabs
         // Supplies the rich-text match highlight when showing search results.
         public Func<string, string> HighlightProvider;
 
+        // Folder the listed items belong to: where a drop that is not on a folder
+        // cell lands. Null while showing search results, which have no one folder.
+        public string DropFolder;
+
         public BetterAssetListView()
         {
             style.flexGrow = 1;
@@ -57,6 +61,49 @@ namespace BetterTabs
 
             _items = new VisualElement();
             _scroll.Add(_items);
+
+            // Dropping anywhere that is not a folder cell targets the listed folder.
+            RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
+            RegisterCallback<DragPerformEvent>(OnDragPerform);
+        }
+
+        // ── Drag and drop ─────────────────────────────────────────────────────
+
+        void OnDragUpdated(DragUpdatedEvent evt)
+        {
+            if (string.IsNullOrEmpty(DropFolder)) return;
+            DragAndDrop.visualMode = BetterDropHandler.VisualModeFor();
+            evt.StopPropagation();
+        }
+
+        void OnDragPerform(DragPerformEvent evt)
+        {
+            if (string.IsNullOrEmpty(DropFolder)) return;
+            if (BetterDropHandler.PerformDrop(DropFolder)) RefreshRequested?.Invoke();
+            evt.StopPropagation();
+        }
+
+        void OnItemDragUpdated(DragUpdatedEvent evt)
+        {
+            if (FolderTarget(evt.currentTarget as VisualElement) == null) return;
+            DragAndDrop.visualMode = BetterDropHandler.VisualModeFor();
+            evt.StopPropagation();
+        }
+
+        void OnItemDragPerform(DragPerformEvent evt)
+        {
+            string folder = FolderTarget(evt.currentTarget as VisualElement);
+            if (folder == null) return;
+            if (BetterDropHandler.PerformDrop(folder)) RefreshRequested?.Invoke();
+            evt.StopPropagation();
+        }
+
+        // Only a folder cell is its own drop target; anything else falls through to
+        // the listed folder.
+        static string FolderTarget(VisualElement item)
+        {
+            string path = item?.userData as string;
+            return !string.IsNullOrEmpty(path) && AssetDatabase.IsValidFolder(path) ? path : null;
         }
 
         static Label MakeColumn(string text, string modifier)
@@ -147,6 +194,8 @@ namespace BetterTabs
             item.RegisterCallback<PointerMoveEvent>(OnItemPointerMove);
             item.RegisterCallback<PointerUpEvent>(OnItemPointerUp);
             item.RegisterCallback<ContextClickEvent>(OnItemContextClick);
+            item.RegisterCallback<DragUpdatedEvent>(OnItemDragUpdated);
+            item.RegisterCallback<DragPerformEvent>(OnItemDragPerform);
             return item;
         }
 

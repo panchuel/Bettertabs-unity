@@ -452,7 +452,7 @@ namespace BetterTabs
         {
             string target = DropFolderFor(RowPath(evt.currentTarget as VisualElement));
             if (target == null) return;
-            DragAndDrop.visualMode = DragAndDropVisualMode.Move;
+            DragAndDrop.visualMode = BetterDropHandler.VisualModeFor();
             evt.StopPropagation();
         }
 
@@ -461,13 +461,13 @@ namespace BetterTabs
             string target = DropFolderFor(RowPath(evt.currentTarget as VisualElement));
             if (target == null) return;
 
-            MoveAssetsInto(target);
+            DropInto(target);
             evt.StopPropagation();
         }
 
         void OnEmptyDragUpdated(DragUpdatedEvent evt)
         {
-            DragAndDrop.visualMode = DragAndDropVisualMode.Move;
+            DragAndDrop.visualMode = BetterDropHandler.VisualModeFor();
             // Must stop here: the built-in collection dragger throws on drag events
             // it has no controller for.
             evt.StopImmediatePropagation();
@@ -475,7 +475,7 @@ namespace BetterTabs
 
         void OnEmptyDragPerform(DragPerformEvent evt)
         {
-            MoveAssetsInto(_rootPath);
+            DropInto(_rootPath);
             evt.StopImmediatePropagation();
         }
 
@@ -485,25 +485,11 @@ namespace BetterTabs
             evt.StopPropagation();
         }
 
-        void MoveAssetsInto(string folder)
+        // Moves assets already in the project and imports files dropped in from the
+        // OS file browser; the handler decides which, per path.
+        void DropInto(string folder)
         {
-            if (string.IsNullOrEmpty(folder)) return;
-
-            DragAndDrop.AcceptDrag();
-            bool moved = false;
-            foreach (string dragged in DragAndDrop.paths)
-            {
-                if (string.IsNullOrEmpty(dragged)) continue;
-                string dest = $"{folder}/{Path.GetFileName(dragged)}";
-                if (dest == dragged) continue;
-
-                string error = AssetDatabase.MoveAsset(dragged, dest);
-                if (!string.IsNullOrEmpty(error)) Debug.LogError($"BetterTabs: Move failed — {error}");
-                else moved = true;
-            }
-
-            if (!moved) return;
-            AssetDatabase.Refresh();
+            if (!BetterDropHandler.PerformDrop(folder)) return;
             Rebuild();
             RefreshRequested?.Invoke();
         }

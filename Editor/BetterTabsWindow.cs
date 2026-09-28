@@ -71,7 +71,6 @@ namespace BetterTabs
         // ── UI Toolkit ────────────────────────────────────────────────────────
         BetterTabsBarView _tabBar;
         BetterTabsToolbarView _toolbar;
-        Label _statusBar;
         IMGUIContainer _rightContainer;
         BetterAssetTreeView _contentTree;
         BetterAssetInspectorView _assetInspector;
@@ -372,10 +371,6 @@ namespace BetterTabs
 
             root.Add(_splitView);
 
-            _statusBar = new Label();
-            _statusBar.AddToClassList("bt-status");
-            root.Add(_statusBar);
-
             // Deferred: the split view must resolve its layout before it can collapse.
             _splitView.schedule.Execute(ApplyProjectPanelVisibility);
 
@@ -424,6 +419,9 @@ namespace BetterTabs
             string key = searching
                 ? "search:" + _search.CommittedQuery
                 : "folder:" + ActiveTabPath();
+
+            // Search results span the whole project, so they have no folder to drop into.
+            _assetList.DropFolder = searching ? null : ActiveTabPath();
 
             if (key == _assetListKey)
             {
@@ -689,7 +687,9 @@ namespace BetterTabs
 
             DragAndDrop.AcceptDrag();
             foreach (string path in DragAndDrop.paths)
-                if (!string.IsNullOrEmpty(path))
+                // A file dragged from the OS file browser has no asset path yet, so
+                // there is nothing to pin; it only makes sense dropped on a folder.
+                if (!string.IsNullOrEmpty(path) && path.Replace('\\', '/').StartsWith("Assets/"))
                     AddOrSelectTab(path);
 
             if (DragAndDrop.objectReferences != null)
@@ -731,7 +731,6 @@ namespace BetterTabs
 
             _toolbar.SetState(!showFocus, showView, _gridView, showFocus, _projectPanelOpen);
             UpdateBreadcrumb();
-            UpdateStatusBar();
         }
 
         // Walkable path of the active tab: every segment but the last opens that
@@ -775,35 +774,6 @@ namespace BetterTabs
         {
             if (string.IsNullOrEmpty(path) || !AssetDatabase.IsValidFolder(path)) return;
             AddOrSelectTab(path);
-        }
-
-        void UpdateStatusBar()
-        {
-            if (_statusBar == null) return;
-
-            if (_search.IsSearching)
-            {
-                int hits = _search.Results.Count;
-                _statusBar.text = $"{hits} result{(hits == 1 ? "" : "s")} · {_search.CommittedQuery}";
-                return;
-            }
-
-            string path = ActiveTabPath();
-            if (string.IsNullOrEmpty(path))
-            {
-                _statusBar.text = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
-                    ? _tabs[_selectedIndex].name : "";
-                return;
-            }
-
-            if (!ActiveTabIsFolder())
-            {
-                _statusBar.text = path;
-                return;
-            }
-
-            int count = FolderContents(path).Count;
-            _statusBar.text = $"{count} item{(count == 1 ? "" : "s")} · {path}";
         }
 
         bool CanAddSelection()

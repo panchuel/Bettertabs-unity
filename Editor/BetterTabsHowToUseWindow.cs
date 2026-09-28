@@ -22,6 +22,7 @@ namespace BetterTabs
 
             Section("Adding Tabs");
             Row("Drag a folder or asset",        "Drop it anywhere onto the BetterTabs window");
+            Row("Drag files from Explorer",       "Drop them on a folder to import them into the project");
             Row("+ button",                       "Select a folder in the Project window, then click +");
             Row("Ctrl + T",                       "Add tab from the current Project selection");
 

@@ -6,13 +6,12 @@
 
 - **UI redesign** — one accent colour (`#5b9dd9`) now marks the active tab, the tree selection and the active view toggle, replacing the two unrelated highlight colours. Tabs are 32px with a rounded top and an accent rule, and fuse with the panel below them.
 - **New toolbar** — a 42px strip under the tabs holds a clickable breadcrumb of the active tab's path, the search field (no longer hidden behind a magnifier), the grid/list segmented toggle and an overflow menu. The tab bar itself now holds only tabs and the `+` button.
-- **Status bar** — item count and full path at the bottom of the window; the search result count moved here from the list header.
 - **Type-coloured icons** — folders, scenes, scripts, prefabs/GameObjects and data assets each get their own icon tint, in tabs, trees and lists. A colour assigned to a tab still wins over the type colour.
 - **Close button on hover** — a tab's `×` only appears while the pointer is over that tab. Its space is reserved, so labels never shift.
 - **Component cards** — the prefab/scene-object inspector shows one card per component headed by its real type name, replacing the repeated generic "Script" rows.
 - **Hierarchy indentation guides** — a hairline per depth level in the hierarchy panel.
 - **Asset inspector header** — icon badge tinted by type, asset name and full path, replacing the 22px title strip.
-- **List view columns** — a NAME / TYPE header, 32px rows and alternating row tint.
+- **List view columns** — a NAME / TYPE header, 32px rows and alternating row tint. The per-row result count the header used to show is gone; the breadcrumb already says where you are.
 
 ### Added
 
@@ -23,6 +22,9 @@
 
 ### Fixed
 
+- **Every asset kind shows the inspector Unity shows.** A source file Unity imports (`.fbx`, `.png`, `.cs`, `.shader`, audio, video…) is inspected through its **AssetImporter** — `ModelImporter` is what draws the Model/Rig/Animation/Materials tabs — while a native asset (`.mat`, `.asset`, `.unity`) is inspected through the asset itself. Only the second kind was ever built here, so a model tab came up empty. The importer's editor is now used whenever Unity has one, decided by asking for it rather than by a list of extensions, so a project's own ScriptedImporter works too.
+- **Materials are no longer an empty strip.** `MaterialEditor` draws nothing at all while Unity considers the object's inspector foldout collapsed. Assets and components are marked expanded before their editor is built, as the native Inspector does.
+- **Files can be dragged in from the OS file browser.** Dropping on a folder only ever called `AssetDatabase.MoveAsset`, which cannot touch a path outside the project, so an external file silently failed. External files are now copied in and imported the way Unity's own Project window does it, and the grid/list view accepts drops at all — it had no drag handling before.
 - **Column widths survive a restart in prefab and scene-object tabs.** Closing Unity while any other tab was active read the width of the hidden hierarchy pane, which measures zero, and saved the minimum over the real value. Both splitters now track their last real width instead of asking a hidden panel.
 - **Tab bar scrolling lerps again.** The animation from 1.0.5 was lost in the UI Toolkit migration; the active tab now glides into view instead of snapping, and so do the overflow arrows.
 
