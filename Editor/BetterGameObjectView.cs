@@ -14,6 +14,7 @@ namespace BetterTabs
     internal class BetterGameObjectView : VisualElement
     {
         const float MinPaneW = 120f;
+        private const string PATH_SEPARATOR = "/";
 
         readonly TwoPaneSplitView _split;
         readonly VisualElement _hierarchyPane;
@@ -205,7 +206,7 @@ namespace BetterTabs
 
             List<TreeViewItemData<string>> roots = new List<TreeViewItemData<string>>
             {
-                BuildNode(_root)
+                BuildNode(_root, BetterHierarchyRenderer.GetPath(_root))
             };
             _hierarchy.SetRootItems(roots);
             _hierarchy.Rebuild();
@@ -224,12 +225,25 @@ namespace BetterTabs
             }
         }
 
-        TreeViewItemData<string> BuildNode(Transform t)
+        // Paths double as tree ids, so same-named siblings must get distinct ones or
+        // they collapse onto a single id and the tree loses or misplaces children.
+        // Ordinals are counted here in one pass instead of asking for each child's
+        // full path, which rescans its siblings every time.
+        private TreeViewItemData<string> BuildNode(Transform t, string path)
         {
-            string path = BetterHierarchyRenderer.GetPath(t);
-            List<TreeViewItemData<string>> children = new List<TreeViewItemData<string>>();
+            List<TreeViewItemData<string>> children = new List<TreeViewItemData<string>>(t.childCount);
+            Dictionary<string, int> nameCounts = new Dictionary<string, int>();
             for (int i = 0; i < t.childCount; i++)
-                children.Add(BuildNode(t.GetChild(i)));
+            {
+                Transform child = t.GetChild(i);
+                int ordinal;
+                nameCounts.TryGetValue(child.name, out ordinal);
+                ordinal++;
+                nameCounts[child.name] = ordinal;
+
+                string childPath = path + PATH_SEPARATOR + BetterHierarchyRenderer.FormatSegment(child.name, ordinal);
+                children.Add(BuildNode(child, childPath));
+            }
             return new TreeViewItemData<string>(IdFor(path), path, children);
         }
 

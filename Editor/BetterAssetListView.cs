@@ -42,9 +42,16 @@ namespace BetterTabs
         // cell lands. Null while showing search results, which have no one folder.
         public string DropFolder;
 
+        public string SelectedPath => _selectedPath;
+
         public BetterAssetListView()
         {
             style.flexGrow = 1;
+
+            // Editor commands (Copy, Paste, Duplicate…) go to the focused element, so the
+            // list takes focus when clicked to receive them.
+            focusable = true;
+            RegisterCallback<PointerDownEvent>(_ => Focus(), TrickleDown.TrickleDown);
 
             // Column header, list mode only. The result count the search used to put
             // here now lives in the window status bar, where it does not steal a row.

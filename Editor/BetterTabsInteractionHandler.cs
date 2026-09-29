@@ -7,9 +7,10 @@ namespace BetterTabs
 {
     internal static class BetterTabsInteractionHandler
     {
+        // Accepts a tree key too, so a sub-asset (a sprite, a clip) opens in its own editor.
         public static void OpenAsset(string path)
         {
-            var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
+            Object obj = BetterAssetTreeView.LoadObject(path);
             if (obj != null) AssetDatabase.OpenAsset(obj);
         }
 

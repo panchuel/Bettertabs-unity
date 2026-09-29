@@ -4,6 +4,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Object = UnityEngine.Object;
 
 namespace BetterTabs
 {
@@ -15,6 +16,16 @@ namespace BetterTabs
     {
         const float RowHeight = 24f;
         const float DragThreshold = 4f;
+        const int LeftButtonMask = 1;
+
+        // A row's key is its asset path, or for a sub-asset (a sprite inside a texture, a
+        // mesh inside a model) "path|localFileId". '|' can never appear in an asset path.
+        const char SubAssetSeparator = '|';
+
+        // Stand-in child that gives a file its expand arrow before its sub-assets are
+        // loaded. They are only read when the file is expanded: loading every texture and
+        // model of the project up front would make every rebuild slow.
+        const string PlaceholderSuffix = "|*";
 
         readonly bool _showTypeColumn;
         readonly bool _showAddButton;
@@ -23,13 +34,24 @@ namespace BetterTabs
         readonly TreeView _tree;
         readonly Dictionary<int, string> _idToPath = new Dictionary<int, string>();
         readonly Dictionary<string, int> _pathToId = new Dictionary<string, int>();
+        // Ids of the items in the tree as last built. _pathToId keeps every path ever seen
+        // (so ids stay stable), but only these can be expanded or selected right now.
+        readonly HashSet<int> _builtIds = new HashSet<int>();
+        // Name and icon of each sub-asset row, read from the Project window's own model
+        // without loading the object.
+        readonly Dictionary<string, SubAssetRow> _subAssetRows = new Dictionary<string, SubAssetRow>();
+
+        // Loaded only for the type column, and only for rows actually shown.
+        readonly Dictionary<string, Object> _subAssetObjects = new Dictionary<string, Object>();
         int _nextId;
+        bool _isBuilt;
+        bool _isRestoringExpansion;
 
         string _renamingPath;
-        string _highlightedPath;
 
         // Drag-out state
         Vector2 _pressPos;
+        string _pressPath;
         bool _pressed;
         bool _dragStarted;
 
@@ -46,6 +68,11 @@ namespace BetterTabs
         public event Action<string> ItemActivated;
         public event Action<List<string>> ItemsDragged;
         public event Action RefreshRequested;
+
+        // A folder was expanded or collapsed by the user, so the owner can persist it.
+        public event Action ExpandedChanged;
+
+        public string RootPath => _rootPath;
 
         public BetterAssetTreeView(bool multiSelect, bool showTypeColumn, bool showAddButton)
         {
@@ -66,6 +93,7 @@ namespace BetterTabs
             _tree.unbindItem = UnbindRow;
             _tree.selectionChanged += OnSelectionChanged;
             _tree.itemsChosen += OnItemsChosen;
+            _tree.itemExpandedChanged += OnItemExpandedChanged;
             Add(_tree);
 
             RegisterCallback<KeyDownEvent>(OnKeyDown);
@@ -90,25 +118,92 @@ namespace BetterTabs
 
         string PathFor(int id) => _idToPath.TryGetValue(id, out string p) ? p : null;
 
-        // ── Data ──────────────────────────────────────────────────────────────
-
-        // Switches the tree to another folder (the active tab root on the right panel).
-        public void SetRoot(string rootPath)
+        public static bool IsSubAssetKey(string key)
         {
-            if (string.IsNullOrEmpty(rootPath) || rootPath == _rootPath) return;
-            _rootPath = rootPath;
-            Rebuild();
+            return !string.IsNullOrEmpty(key) && key.IndexOf(SubAssetSeparator) >= 0;
         }
 
+        public static string MainPathOf(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return key;
+            int separator = key.IndexOf(SubAssetSeparator);
+            return separator < 0 ? key : key.Substring(0, separator);
+        }
+
+        // The object a row stands for: the main asset for a path, the sub-asset for a
+        // "path|localFileId" key.
+        public static Object LoadObject(string key)
+        {
+            if (!IsSubAssetKey(key)) return AssetDatabase.LoadAssetAtPath<Object>(key);
+
+            int separator = key.IndexOf(SubAssetSeparator);
+            if (!long.TryParse(key.Substring(separator + 1), out long wantedId)) return null;
+
+            foreach (Object representation in AssetDatabase.LoadAllAssetRepresentationsAtPath(key.Substring(0, separator)))
+            {
+                if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(representation, out string guid, out long localId)
+                    && localId == wantedId)
+                    return representation;
+            }
+            return null;
+        }
+
+        // The key a tree would use for an object selected anywhere in the editor.
+        public static string KeyFor(Object obj)
+        {
+            string path = AssetDatabase.GetAssetPath(obj);
+            if (string.IsNullOrEmpty(path) || AssetDatabase.IsMainAsset(obj)) return path;
+            if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(obj, out string guid, out long localId)) return path;
+            return path + SubAssetSeparator + localId;
+        }
+
+        // ── Data ──────────────────────────────────────────────────────────────
+
+        // Switches the tree to another folder (the active tab root on the right panel) and
+        // restores the folders that tab had open. The expansion is applied here, once the
+        // new items exist: applying it before the switch expanded nothing.
+        public void SetRoot(string rootPath, List<string> expandedPaths)
+        {
+            if (string.IsNullOrEmpty(rootPath)) return;
+            if (_isBuilt && rootPath == _rootPath) return;
+
+            _rootPath = rootPath;
+            BuildTree(expandedPaths);
+        }
+
+        // Rebuilds from disk (an asset was added, moved or deleted) keeping every folder
+        // that was open still open.
         public void Rebuild()
         {
+            List<string> expanded = new List<string>();
+            if (_isBuilt) SaveExpandedState(expanded);
+            BuildTree(expanded);
+        }
+
+        void BuildTree(List<string> expandedPaths)
+        {
+            _builtIds.Clear();
+            _subAssetRows.Clear();
+            _subAssetObjects.Clear();
             List<TreeViewItemData<string>> roots = new List<TreeViewItemData<string>>
             {
-                new TreeViewItemData<string>(IdFor(_rootPath), _rootPath, BuildChildren(_rootPath))
+                new TreeViewItemData<string>(TrackedId(_rootPath), _rootPath, BuildChildren(_rootPath))
             };
             _tree.SetRootItems(roots);
             _tree.Rebuild();
+            _isBuilt = true;
+
+            _isRestoringExpansion = true;
             _tree.ExpandItem(IdFor(_rootPath));
+            LoadExpandedState(expandedPaths);
+            _isRestoringExpansion = false;
+        }
+
+        int TrackedId(string path)
+        {
+            int id = IdFor(path);
+            _builtIds.Add(id);
+            return id;
         }
 
         List<TreeViewItemData<string>> BuildChildren(string folder)
@@ -118,7 +213,9 @@ namespace BetterTabs
             string[] subFolders = AssetDatabase.GetSubFolders(folder);
             Array.Sort(subFolders, StringComparer.OrdinalIgnoreCase);
             foreach (string sub in subFolders)
-                children.Add(new TreeViewItemData<string>(IdFor(sub), sub, BuildChildren(sub)));
+                children.Add(new TreeViewItemData<string>(TrackedId(sub), sub, BuildChildren(sub)));
+
+            HashSet<string> filesWithSubAssets = FilesWithSubAssets(folder);
 
             List<string> files = new List<string>();
             foreach (string file in Directory.GetFiles(folder))
@@ -128,9 +225,99 @@ namespace BetterTabs
             }
             files.Sort(StringComparer.OrdinalIgnoreCase);
             foreach (string file in files)
-                children.Add(new TreeViewItemData<string>(IdFor(file), file));
+            {
+                List<TreeViewItemData<string>> subAssets = null;
+                if (filesWithSubAssets.Contains(file))
+                {
+                    string placeholder = file + PlaceholderSuffix;
+                    subAssets = new List<TreeViewItemData<string>>
+                    {
+                        new TreeViewItemData<string>(TrackedId(placeholder), placeholder)
+                    };
+                }
+                children.Add(new TreeViewItemData<string>(TrackedId(file), file, subAssets));
+            }
 
             return children;
+        }
+
+        // HierarchyIterator is the model behind Unity's Project window. For each item right
+        // inside a folder it knows, without loading anything, whether the item has
+        // children: for a file that means visible sub-assets, of any type (sprites, meshes,
+        // clips, Input Actions maps, a ScriptableObject's added objects…). So a file gets
+        // an expand arrow here exactly when it gets one in the Project window.
+        static HashSet<string> FilesWithSubAssets(string folder)
+        {
+            HashSet<string> files = new HashSet<string>();
+            HierarchyIterator property = new HierarchyIterator(folder);
+
+            // No expanded ids: only the folder's own items are visited, never their children.
+            while (property.Next(null))
+            {
+                if (property.isFolder || !property.hasChildren) continue;
+                files.Add(AssetDatabase.GUIDToAssetPath(property.guid));
+            }
+            return files;
+        }
+
+        // Swaps a file's placeholder for its real sub-assets, the first time it is expanded.
+        void LoadSubAssetsIfNeeded(int fileId)
+        {
+            string file = PathFor(fileId);
+            if (string.IsNullOrEmpty(file) || IsSubAssetKey(file)) return;
+            if (!_pathToId.TryGetValue(file + PlaceholderSuffix, out int placeholderId)) return;
+            if (!_builtIds.Contains(placeholderId)) return;
+
+            _tree.TryRemoveItem(placeholderId, false);
+            _builtIds.Remove(placeholderId);
+
+            foreach (KeyValuePair<string, SubAssetRow> subAsset in ReadSubAssets(file))
+            {
+                _subAssetRows[subAsset.Key] = subAsset.Value;
+                _tree.AddItem(new TreeViewItemData<string>(TrackedId(subAsset.Key), subAsset.Key), fileId, -1, false);
+            }
+
+            _tree.RefreshItems();
+        }
+
+        // Walks the file's folder in the Project window's model with only this file
+        // expanded: the rows one level below it are its sub-assets, in the order and with
+        // the names and icons the Project window shows. Nothing is loaded.
+        static List<KeyValuePair<string, SubAssetRow>> ReadSubAssets(string file)
+        {
+            List<KeyValuePair<string, SubAssetRow>> subAssets = new List<KeyValuePair<string, SubAssetRow>>();
+            string folder = Path.GetDirectoryName(file)?.Replace('\\', '/');
+            string fileGuid = AssetDatabase.AssetPathToGUID(file);
+            if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(fileGuid)) return subAssets;
+
+            HierarchyIterator property = new HierarchyIterator(folder);
+            EntityId[] expanded = null;
+            int fileDepth = -1;
+
+            while (property.Next(expanded))
+            {
+                if (fileDepth < 0)
+                {
+                    if (property.isFolder || property.guid != fileGuid) continue;
+
+                    // Found the file: expand it so the next rows are its children.
+                    fileDepth = property.depth;
+                    expanded = new[] { property.entityId };
+                    continue;
+                }
+
+                if (property.depth <= fileDepth) break;
+                if (property.depth != fileDepth + 1) continue;
+
+                if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(property.entityId, out string guid, out long localId)) continue;
+
+                SubAssetRow row = new SubAssetRow();
+                row.Name = property.name;
+                row.Icon = property.icon;
+                subAssets.Add(new KeyValuePair<string, SubAssetRow>(file + SubAssetSeparator + localId, row));
+            }
+
+            return subAssets;
         }
 
         // ── Rows ──────────────────────────────────────────────────────────────
@@ -182,6 +369,12 @@ namespace BetterTabs
             TextField field = row.Q<TextField>(className: "bt-row__field");
             Button add = row.Q<Button>(className: "bt-row__add");
 
+            if (IsSubAssetKey(path))
+            {
+                BindSubAssetRow(row, path, icon, label, field, add);
+                return;
+            }
+
             icon.image = AssetDatabase.GetCachedIcon(path);
             // All three are assigned unconditionally: rows are recycled, so an untagged
             // path has to actively clear what the last one left behind. A colour the
@@ -196,8 +389,6 @@ namespace BetterTabs
             label.style.display = renaming ? DisplayStyle.None : DisplayStyle.Flex;
             field.style.display = renaming ? DisplayStyle.Flex : DisplayStyle.None;
             label.text = path == _rootPath ? _rootPath : Path.GetFileNameWithoutExtension(path);
-
-            row.EnableInClassList("bt-row--highlighted", path == _highlightedPath && !renaming);
 
             if (_showTypeColumn)
             {
@@ -222,6 +413,39 @@ namespace BetterTabs
                     field.SelectAll();
                 }).ExecuteLater(0);
             }
+        }
+
+        // Rows are recycled, so everything a file or folder row may have set is reset here.
+        void BindSubAssetRow(VisualElement row, string key, Image icon, Label label, TextField field, Button add)
+        {
+            bool hasRow = _subAssetRows.TryGetValue(key, out SubAssetRow subAsset);
+
+            icon.image = hasRow ? subAsset.Icon : null;
+            icon.tintColor = Color.white;
+            row.EnableInClassList("bt-row--deprecated", false);
+            row.style.backgroundImage = StyleKeyword.None;
+
+            label.style.display = DisplayStyle.Flex;
+            field.style.display = DisplayStyle.None;
+            label.text = hasRow ? subAsset.Name : string.Empty;
+
+            if (_showTypeColumn)
+            {
+                Label type = row.Q<Label>(className: "bt-row__type");
+                Object subAssetObject = hasRow ? SubAssetObject(key) : null;
+                type.text = subAssetObject != null ? subAssetObject.GetType().Name : string.Empty;
+            }
+
+            add.style.display = DisplayStyle.None;
+        }
+
+        Object SubAssetObject(string key)
+        {
+            if (_subAssetObjects.TryGetValue(key, out Object cached)) return cached;
+
+            Object loaded = LoadObject(key);
+            _subAssetObjects[key] = loaded;
+            return loaded;
         }
 
         void UnbindRow(VisualElement row, int index)
@@ -260,8 +484,22 @@ namespace BetterTabs
 
         public void SetSelectedPath(string path)
         {
-            if (string.IsNullOrEmpty(path) || !_pathToId.TryGetValue(path, out int id)) return;
-            _tree.SetSelectionByIdWithoutNotify(new[] { id });
+            if (string.IsNullOrEmpty(path)) return;
+            SetSelectedPaths(new List<string> { path });
+        }
+
+        // Mirrors a selection made elsewhere. Paths not in this tree are left out, and an
+        // empty list clears it: a stale selection here next to the new one elsewhere is
+        // what showed two rows marked at once.
+        public void SetSelectedPaths(List<string> paths)
+        {
+            List<int> ids = new List<int>();
+            foreach (string path in paths)
+            {
+                if (!string.IsNullOrEmpty(path) && _pathToId.TryGetValue(path, out int id) && _builtIds.Contains(id))
+                    ids.Add(id);
+            }
+            _tree.SetSelectionByIdWithoutNotify(ids);
         }
 
         // A left-to-right alpha ramp in the row's colour, strongest at its left edge.
@@ -288,15 +526,23 @@ namespace BetterTabs
             _tree.RefreshItems();
         }
 
-        public void SetHighlight(string path)
-        {
-            _highlightedPath = path;
-            _tree.RefreshItems();
-        }
-
         public void ExpandToPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return;
+
+            // A sub-asset sits under its file: open the folders down to the file, then the
+            // file itself, loading its sub-assets so the row exists to be selected.
+            if (IsSubAssetKey(path))
+            {
+                string file = MainPathOf(path);
+                ExpandToPath(file);
+                if (_pathToId.TryGetValue(file, out int fileId) && _builtIds.Contains(fileId))
+                {
+                    _tree.ExpandItem(fileId);
+                    LoadSubAssetsIfNeeded(fileId);
+                }
+                return;
+            }
             string parent = Path.GetDirectoryName(path)?.Replace('\\', '/');
             List<string> chain = new List<string>();
             while (!string.IsNullOrEmpty(parent) && parent.StartsWith(_rootPath))
@@ -306,7 +552,7 @@ namespace BetterTabs
                 parent = Path.GetDirectoryName(parent)?.Replace('\\', '/');
             }
             for (int i = chain.Count - 1; i >= 0; i--)
-                if (_pathToId.TryGetValue(chain[i], out int id)) _tree.ExpandItem(id);
+                if (_pathToId.TryGetValue(chain[i], out int id) && _builtIds.Contains(id)) _tree.ExpandItem(id);
         }
 
         public void ScrollToPath(string path)
@@ -331,6 +577,9 @@ namespace BetterTabs
             }
             else if (evt.keyCode == KeyCode.Delete)
             {
+                selected.RemoveAll(IsSubAssetKey);
+                if (selected.Count == 0) return;
+
                 if (BetterTabsInteractionHandler.DeleteMultiple(selected))
                 {
                     Rebuild();
@@ -344,7 +593,7 @@ namespace BetterTabs
 
         public void StartRename(string path)
         {
-            if (string.IsNullOrEmpty(path) || path == _rootPath) return;
+            if (string.IsNullOrEmpty(path) || path == _rootPath || IsSubAssetKey(path)) return;
             _renamingPath = path;
             _tree.RefreshItems();
         }
@@ -353,18 +602,18 @@ namespace BetterTabs
         {
             if (_renamingPath == null) return;
 
+            // Registered on the field in TrickleDown, so stopping propagation here keeps the
+            // key from ever reaching the text input underneath: nothing else to prevent.
             if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
             {
                 TextField field = evt.currentTarget as TextField;
                 CommitRename(field != null ? field.value : null);
                 evt.StopPropagation();
-                evt.PreventDefault();
             }
             else if (evt.keyCode == KeyCode.Escape)
             {
                 CancelRename();
                 evt.StopPropagation();
-                evt.PreventDefault();
             }
         }
 
@@ -413,6 +662,7 @@ namespace BetterTabs
             }
 
             _pressPos = evt.position;
+            _pressPath = path;
             _pressed = true;
             _dragStarted = false;
         }
@@ -420,10 +670,22 @@ namespace BetterTabs
         void OnRowPointerMove(PointerMoveEvent evt)
         {
             if (!_pressed || _dragStarted) return;
+
+            // The press can be released outside the row it started on, where that row's
+            // PointerUp never arrives. A move with no button held is then a plain hover,
+            // and Unity refuses to start a drag outside MouseDown/MouseDrag.
+            if ((evt.pressedButtons & LeftButtonMask) == 0)
+            {
+                _pressed = false;
+                return;
+            }
+
             if ((evt.position - (Vector3)_pressPos).magnitude < DragThreshold) return;
 
+            // The row that was pressed, not the one under the pointer now: a fast drag
+            // can already be over a neighbour by the time the threshold is crossed.
             List<string> paths = GetSelectedPaths();
-            string row = RowPath(evt.currentTarget as VisualElement);
+            string row = _pressPath;
             if (!string.IsNullOrEmpty(row) && !paths.Contains(row))
             {
                 paths.Clear();
@@ -506,6 +768,11 @@ namespace BetterTabs
         {
             string path = RowPath(evt.currentTarget as VisualElement);
             if (string.IsNullOrEmpty(path)) return;
+            if (IsSubAssetKey(path))
+            {
+                evt.StopPropagation();
+                return;
+            }
 
             if (AssetDatabase.IsValidFolder(path)) ShowCreateMenu(path);
             else
@@ -531,37 +798,65 @@ namespace BetterTabs
 
         // ── Expanded state persistence ────────────────────────────────────────
 
+        void OnItemExpandedChanged(TreeViewExpansionChangedArgs args)
+        {
+            // Deferred: changing the tree's items from inside its own expand callback is
+            // not safe.
+            if (args.isExpanded)
+            {
+                int id = args.id;
+                schedule.Execute(() => LoadSubAssetsIfNeeded(id));
+            }
+
+            // Restoring a saved state is not a user change, and saving it back mid-restore
+            // would write a half-applied list.
+            if (_isRestoringExpansion) return;
+            ExpandedChanged?.Invoke();
+        }
+
         // List variants: the right panel stores expand state per tab.
         public void SaveExpandedState(List<string> target)
         {
             if (target == null) return;
             target.Clear();
             foreach (KeyValuePair<string, int> kv in _pathToId)
-                if (_tree.IsExpanded(kv.Value)) target.Add(kv.Key);
+                if (_builtIds.Contains(kv.Value) && _tree.IsExpanded(kv.Value)) target.Add(kv.Key);
         }
 
         public void LoadExpandedState(List<string> expandedPaths)
         {
             if (expandedPaths == null) return;
+
+            bool wasRestoring = _isRestoringExpansion;
+            _isRestoringExpansion = true;
             foreach (string path in expandedPaths)
-                if (!string.IsNullOrEmpty(path) && _pathToId.TryGetValue(path, out int id))
-                    _tree.ExpandItem(id);
+            {
+                if (string.IsNullOrEmpty(path) || !_pathToId.TryGetValue(path, out int id) || !_builtIds.Contains(id))
+                    continue;
+
+                _tree.ExpandItem(id);
+                LoadSubAssetsIfNeeded(id);
+            }
+            _isRestoringExpansion = wasRestoring;
         }
 
         public string SaveExpandedState()
         {
             List<string> expanded = new List<string>();
-            foreach (KeyValuePair<string, int> kv in _pathToId)
-                if (_tree.IsExpanded(kv.Value)) expanded.Add(kv.Key);
+            SaveExpandedState(expanded);
             return string.Join("|", expanded);
         }
 
         public void LoadExpandedState(string data)
         {
             if (string.IsNullOrEmpty(data)) return;
-            foreach (string path in data.Split('|'))
-                if (!string.IsNullOrEmpty(path) && _pathToId.TryGetValue(path, out int id))
-                    _tree.ExpandItem(id);
+            LoadExpandedState(new List<string>(data.Split('|')));
+        }
+
+        struct SubAssetRow
+        {
+            public string Name;
+            public Texture Icon;
         }
     }
 }

@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEditor.Search;
 using UnityEditor.ShortcutManagement;
 using UnityEngine;
@@ -42,6 +43,11 @@ namespace BetterTabs
 
         // ── Prefab / SceneObject hierarchy view ───────────────────────────────
         readonly Dictionary<string, GameObject> _loadedPrefabRoots = new Dictionary<string, GameObject>();
+        // Prefabs edited since they were last written. Only these are ever saved: writing
+        // an untouched prefab still counts as an asset change, and doing it for every
+        // open tab on each domain reload made Multiplayer Play Mode clones (whose asset
+        // database is read-only) report out-of-date assets on entering Play Mode.
+        readonly HashSet<string> _dirtyPrefabs = new HashSet<string>();
         float _previewHeight = 180f;
         bool _previewCollapsed;
         static string PreviewHeightKey => $"BetterTabs_PreviewHeight_{Application.productName}";
@@ -72,6 +78,19 @@ namespace BetterTabs
         BetterTabsBarView _tabBar;
         BetterTabsToolbarView _toolbar;
         IMGUIContainer _rightContainer;
+
+        // ── In-window pages (How to Use, Settings) ────────────────────────────
+        enum Page { None, Help, Settings }
+
+        static readonly string[] HelpIconNames = { "d__Help", "_Help" };
+        static readonly string[] SettingsIconNames = { "d_Settings", "Settings", "d_SettingsIcon", "SettingsIcon" };
+
+        Page _openPage = Page.None;
+        VisualElement _pageHost;
+        Label _pageTitle;
+        ScrollView _pageScroll;
+        Button _helpButton;
+        Button _settingsButton;
         BetterAssetTreeView _contentTree;
         BetterAssetInspectorView _assetInspector;
         BetterAssetListView _assetList;
@@ -121,7 +140,9 @@ namespace BetterTabs
         }
 
         // ── Menu items ───────────────────────────────────────────────────────
-        [MenuItem("Window/BetterTabs/Open BetterTabs")]
+        // One entry, no submenu: How to Use and Settings are pages of the window itself,
+        // reached from the ? and gear at its bottom right.
+        [MenuItem("Window/Panchuel/BetterTabs")]
         public static void Open()
         {
             var w = GetWindow<BetterTabsWindow>();
@@ -163,19 +184,27 @@ namespace BetterTabs
             EditorApplication.projectChanged += OnProjectChanged;
             Selection.selectionChanged += OnUnitySelectionChanged;
             EditorApplication.update += OnEditorUpdate;
+            // A scene object tab can only be focused while its scene is open.
+            EditorSceneManager.sceneOpened += OnSceneOpened;
+            EditorSceneManager.sceneClosed += OnSceneClosed;
 
             // Reference clicks made in Unity's own Inspector land here too, so the
             // left panel follows wherever the user is reading the object from.
             BetterNativeInspectorLink.Enable(RevealInProjectPanel);
+
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
         }
 
         void OnDisable()
         {
             s_instance = null;
             BetterNativeInspectorLink.Disable();
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             EditorApplication.projectChanged -= OnProjectChanged;
             Selection.selectionChanged -= OnUnitySelectionChanged;
             EditorApplication.update -= OnEditorUpdate;
+            EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorSceneManager.sceneClosed -= OnSceneClosed;
             _assetInspector?.DestroyEditor();
             SaveAndUnloadAllPrefabs();
             _goView?.Invalidate();
@@ -203,6 +232,26 @@ namespace BetterTabs
             RequestRefresh();
         }
 
+        // A script reload disables every ScriptableObject, the inspector's importer editor
+        // included, before this window's OnDisable runs. Destroying the editor there then
+        // disabled it a second time, and an AssetImporterEditor reports a second OnDisable
+        // as "OnEnable must call base.OnEnable". Destroying it here, before Unity touches
+        // anything, disables it exactly once.
+        void OnBeforeAssemblyReload()
+        {
+            _assetInspector?.DestroyEditor();
+        }
+
+        void OnSceneOpened(UnityEngine.SceneManagement.Scene scene, OpenSceneMode mode)
+        {
+            UpdateTabBarButtons();
+        }
+
+        void OnSceneClosed(UnityEngine.SceneManagement.Scene scene)
+        {
+            UpdateTabBarButtons();
+        }
+
         // Polling fallback: Selection.selectionChanged isn't always delivered to a
         // custom window depending on context, so also watch the selection each tick.
         void OnEditorUpdate()
@@ -223,6 +272,7 @@ namespace BetterTabs
                 _contentTree?.Rebuild();
                 // Force the flat list to rebuild too: its contents just changed.
                 _assetListKey = null;
+                OnUnitySelectionChanged();
                 Repaint();
             }
 
@@ -233,25 +283,56 @@ namespace BetterTabs
             UpdateTabBarButtons();
         }
 
-        // Mirror the Unity selection into the left project panel when the user selects
-        // an asset elsewhere (Project window, Inspector, or a field reference), so it
-        // appears selected and scrolled into view.
+        // Unity's selection is the single source of truth for what is selected. Whatever
+        // picked it (either BetterTabs panel, the Project window, the Inspector, a field
+        // reference), both panels here are made to match it, including clearing them when
+        // the selection is not an asset they hold. Each panel used to keep its own last
+        // pick, which is how an old selection stayed marked next to the new one.
         void OnUnitySelectionChanged()
         {
-            if (!_projectPanelOpen || _projectTree == null) return;
-            if (Selection.activeObject == null) return;
+            List<string> paths = SelectedAssetPaths();
+            string activePath = Selection.activeObject != null
+                ? BetterAssetTreeView.KeyFor(Selection.activeObject)
+                : null;
 
-            string path = AssetDatabase.GetAssetPath(Selection.activeObject);
-            if (string.IsNullOrEmpty(path) || !path.StartsWith("Assets")) return;
+            // The grid lists files only, so it follows the file a sub-asset belongs to.
+            string activeFile = BetterAssetTreeView.MainPathOf(activePath);
+            _selectedAssetPath = string.IsNullOrEmpty(activeFile) ? null : activeFile;
+            _assetList?.SetSelected(_selectedAssetPath);
 
-            // Already selected here (e.g. the tool set the Unity selection itself) →
-            // don't clobber a multi-selection.
-            if (_projectTree.GetSelectedPaths().Contains(path)) return;
+            if (_projectTree != null && !IsSameSelection(_projectTree.GetSelectedPaths(), paths))
+            {
+                // Expanded first: a row inside a collapsed folder cannot be selected.
+                if (!string.IsNullOrEmpty(activePath)) _projectTree.ExpandToPath(activePath);
+                _projectTree.SetSelectedPaths(paths);
+                if (!string.IsNullOrEmpty(activePath)) ScrollProjectPanelToPath(activePath);
+            }
 
-            _projectTree.SetSelectedPath(path);
-            _projectTree.ExpandToPath(path);
-            ScrollProjectPanelToPath(path);
+            // The right tree is left as the tab's layout: only rows it already shows are marked.
+            if (_contentTree != null && !IsSameSelection(_contentTree.GetSelectedPaths(), paths))
+                _contentTree.SetSelectedPaths(paths);
+
             Repaint();
+        }
+
+        static List<string> SelectedAssetPaths()
+        {
+            List<string> paths = new List<string>();
+            foreach (Object selected in Selection.objects)
+            {
+                string path = BetterAssetTreeView.KeyFor(selected);
+                if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets") && !paths.Contains(path))
+                    paths.Add(path);
+            }
+            return paths;
+        }
+
+        static bool IsSameSelection(List<string> current, List<string> wanted)
+        {
+            if (current.Count != wanted.Count) return false;
+            foreach (string path in wanted)
+                if (!current.Contains(path)) return false;
+            return true;
         }
 
         // ── GUI ──────────────────────────────────────────────────────────────
@@ -268,6 +349,10 @@ namespace BetterTabs
             // TrickleDown: seen before the trees, which consume plain arrow keys.
             root.RegisterCallback<WheelEvent>(OnRootWheel, TrickleDown.TrickleDown);
             root.RegisterCallback<KeyDownEvent>(OnRootKeyDown, TrickleDown.TrickleDown);
+            // Bubble phase: a text field (search, rename) handles its own copy/paste first
+            // and stops it, so only commands aimed at the asset panels arrive here.
+            root.RegisterCallback<ValidateCommandEvent>(OnRootValidateCommand);
+            root.RegisterCallback<ExecuteCommandEvent>(OnRootExecuteCommand);
 
             StyleSheet sheet = LoadStyleSheet();
             if (sheet != null) root.styleSheets.Add(sheet);
@@ -278,6 +363,7 @@ namespace BetterTabs
             _tabBar.TabContextMenu += ShowTabContextMenu;
             _tabBar.TabMoved += OnTabMoved;
             _tabBar.AddClicked += AddTabFromSelection;
+            _tabBar.UnsavedProvider = tab => tab.kind == BetterTabKind.Prefab && _dirtyPrefabs.Contains(tab.path);
             // Dropping assets on the bar creates tabs (was IMGUI DragPerform before).
             _tabBar.RegisterCallback<DragUpdatedEvent>(OnTabBarDragUpdated);
             _tabBar.RegisterCallback<DragPerformEvent>(OnTabBarDragPerform);
@@ -287,10 +373,9 @@ namespace BetterTabs
             _toolbar.SearchChanged += OnSearchChanged;
             _toolbar.CrumbClicked += OnBreadcrumbClicked;
             _toolbar.FocusClicked += () => PingTab(_selectedIndex);
+            _toolbar.SaveClicked += SaveActivePrefab;
             _toolbar.PanelToggleClicked += ToggleProjectPanel;
             _toolbar.UnitySearchClicked += OpenUnitySearchWindow;
-            _toolbar.SettingsClicked += BetterTabsSettingsWindow.Open;
-            _toolbar.HelpClicked += BetterTabsHowToUseWindow.Open;
             _toolbar.ViewModeChanged += grid =>
             {
                 if (_gridView == grid) return;
@@ -309,9 +394,10 @@ namespace BetterTabs
             _projectTree.style.minWidth = MinPanelW;
             _projectTree.AddToClassList("bt-panel");
             _projectTree.ItemSelected += OnProjectPanelItemClicked;
-            _projectTree.ItemActivated += AddOrSelectTab;
+            _projectTree.ItemActivated += OnProjectPanelItemActivated;
             _projectTree.ItemsDragged += OnAssetDragged;
             _projectTree.RefreshRequested += RequestRefresh;
+            _projectTree.ExpandedChanged += SaveProjectPanelExpansion;
             _projectTree.RowBackgroundProvider = GetRowBackgroundTint;
             _projectTree.LoadExpandedState(EditorPrefs.GetString(ProjectExpandedKey, ""));
             _splitView.Add(_projectTree);
@@ -333,6 +419,7 @@ namespace BetterTabs
             _contentTree.ItemActivated += BetterTabsInteractionHandler.OpenAsset;
             _contentTree.ItemsDragged += OnAssetDragged;
             _contentTree.RefreshRequested += RequestRefresh;
+            _contentTree.ExpandedChanged += OnFoldoutToggled;
             _contentTree.TabColorProvider = GetTabColorForPath;
             _rightPane.Add(_contentTree);
 
@@ -369,12 +456,141 @@ namespace BetterTabs
 
             _splitView.Add(_rightPane);
 
-            root.Add(_splitView);
+            // The pages lie over the split view instead of replacing it: hiding the split
+            // view before its first layout (the guide opens straight away the first time)
+            // would leave its divider dead.
+            VisualElement body = new VisualElement();
+            body.AddToClassList("bt-body");
+            body.Add(_splitView);
+            body.Add(BuildPageHost());
+            root.Add(body);
+            root.Add(BuildFooter());
 
             // Deferred: the split view must resolve its layout before it can collapse.
             _splitView.schedule.Execute(ApplyProjectPanelVisibility);
 
             RefreshTabBar();
+
+            if (!BetterTabsSettings.HasSeenHelp)
+            {
+                BetterTabsSettings.HasSeenHelp = true;
+                _openPage = Page.Help;
+            }
+            ApplyPage();
+        }
+
+        // ── Pages ─────────────────────────────────────────────────────────────
+        // How to Use and Settings are pages of this window, not windows of their own:
+        // they take the content area, with the tab bar still in place, and close with
+        // their ×, with Esc, or by picking a tab.
+
+        VisualElement BuildPageHost()
+        {
+            _pageHost = new VisualElement();
+            _pageHost.AddToClassList("bt-page-host");
+
+            VisualElement header = new VisualElement();
+            header.AddToClassList("bt-page-host__header");
+
+            _pageTitle = new Label();
+            _pageTitle.AddToClassList("bt-page-host__title");
+            header.Add(_pageTitle);
+
+            VisualElement spacer = new VisualElement();
+            spacer.AddToClassList("bt-toolbar__spacer");
+            header.Add(spacer);
+
+            Button close = new Button(ClosePage) { text = "×", tooltip = "Close (Esc)" };
+            close.AddToClassList("bt-toolbar__btn");
+            header.Add(close);
+            _pageHost.Add(header);
+
+            _pageScroll = new ScrollView(ScrollViewMode.Vertical);
+            _pageScroll.AddToClassList("bt-page-host__scroll");
+            _pageHost.Add(_pageScroll);
+
+            return _pageHost;
+        }
+
+        // Thin strip along the bottom: the help and settings buttons sit at its right end.
+        VisualElement BuildFooter()
+        {
+            VisualElement footer = new VisualElement();
+            footer.AddToClassList("bt-footer");
+
+            VisualElement spacer = new VisualElement();
+            spacer.AddToClassList("bt-toolbar__spacer");
+            footer.Add(spacer);
+
+            _helpButton = MakeFooterButton(HelpIconNames, "?", "How to Use", () => TogglePage(Page.Help));
+            footer.Add(_helpButton);
+
+            _settingsButton = MakeFooterButton(SettingsIconNames, "⚙", "Settings", () => TogglePage(Page.Settings));
+            footer.Add(_settingsButton);
+
+            return footer;
+        }
+
+        static Button MakeFooterButton(string[] iconNames, string fallbackGlyph, string tooltip, System.Action onClick)
+        {
+            Button button = new Button(onClick) { tooltip = tooltip };
+            button.AddToClassList("bt-footer__btn");
+
+            Texture2D icon = null;
+            foreach (string iconName in iconNames)
+            {
+                icon = EditorGUIUtility.FindTexture(iconName);
+                if (icon != null) break;
+            }
+
+            if (icon == null)
+            {
+                button.text = fallbackGlyph;
+                return button;
+            }
+
+            Image image = new Image { image = icon, scaleMode = ScaleMode.ScaleToFit };
+            image.AddToClassList("bt-footer__icon");
+            button.Add(image);
+            return button;
+        }
+
+        void OpenPage(Page page)
+        {
+            _openPage = page;
+            ApplyPage();
+        }
+
+        void TogglePage(Page page)
+        {
+            if (_openPage == page) ClosePage();
+            else OpenPage(page);
+        }
+
+        void ClosePage()
+        {
+            if (_openPage == Page.None) return;
+            _openPage = Page.None;
+            ApplyPage();
+        }
+
+        void ApplyPage()
+        {
+            // A page chosen before the UI exists (the first-open guide) is applied by CreateGUI.
+            if (_pageHost == null) return;
+
+            bool isOpen = _openPage != Page.None;
+            _pageHost.style.display = isOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            _helpButton.EnableInClassList("bt-footer__btn--active", _openPage == Page.Help);
+            _settingsButton.EnableInClassList("bt-footer__btn--active", _openPage == Page.Settings);
+
+            _pageScroll.Clear();
+            if (!isOpen) return;
+
+            // Rebuilt on every open so the settings always show their current values.
+            _pageTitle.text = _openPage == Page.Help ? "How to Use" : "Settings";
+            _pageScroll.Add(_openPage == Page.Help ? (VisualElement)new BetterTabsHelpView() : new BetterTabsSettingsView());
+            _pageScroll.scrollOffset = Vector2.zero;
         }
 
         // Route keys (F2, Delete, arrows) to the IMGUI content when the window is focused.
@@ -462,6 +678,15 @@ namespace BetterTabs
             return folders;
         }
 
+        // Like the Project window: a folder opens (here, as a tab) and anything else opens in
+        // its own editor, so double-clicking a prefab enters Prefab Mode. Assets are pinned
+        // as tabs by dragging them onto the window or with Ctrl+T.
+        void OnProjectPanelItemActivated(string path)
+        {
+            if (AssetDatabase.IsValidFolder(path)) AddOrSelectTab(path);
+            else BetterTabsInteractionHandler.OpenAsset(path);
+        }
+
         void OnListItemActivated(string path)
         {
             if (AssetDatabase.IsValidFolder(path)) AddOrSelectTab(path);
@@ -493,6 +718,7 @@ namespace BetterTabs
         // Search is project-wide, so it is window state rather than tab state.
         void OnSearchChanged(string query)
         {
+            ClosePage();
             _searchInputText = query ?? "";
             if (string.IsNullOrEmpty(_searchInputText)) _search.Clear();
             else _search.ForceCommit(_searchInputText);
@@ -555,12 +781,20 @@ namespace BetterTabs
             BetterTabEntry tab = _tabs[_selectedIndex];
             if (tab.kind != BetterTabKind.Prefab) return;
 
-            string prefabPath = tab.path;
-            EditorApplication.delayCall += () =>
-            {
-                if (_loadedPrefabRoots.TryGetValue(prefabPath, out GameObject root) && root != null)
-                    PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
-            };
+            // Not written here any more: the prefab is saved with the toolbar's Save (or
+            // Ctrl+S), and automatically when its tab is left or closed. The first edit
+            // flips the tab's unsaved mark and enables Save.
+            if (_dirtyPrefabs.Add(tab.path)) RefreshTabBar();
+        }
+
+        void SaveActivePrefab()
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
+            BetterTabEntry tab = _tabs[_selectedIndex];
+            if (tab.kind != BetterTabKind.Prefab) return;
+
+            SavePrefabIfDirty(tab.path);
+            RefreshTabBar();
         }
 
         void UpdateRightPaneMode()
@@ -590,7 +824,7 @@ namespace BetterTabs
                 : treeMode ? 1
                 : listMode ? 3 : 0;
 
-            if (treeMode) _contentTree.SetRoot(ActiveTabPath());
+            if (treeMode) _contentTree.SetRoot(ActiveTabPath(), _tabs[_selectedIndex].expandedPaths);
             if (assetMode) _assetInspector.SetAsset(ActiveTabPath());
             if (listMode) RefreshAssetList(searchMode);
             if (goMode)
@@ -663,7 +897,8 @@ namespace BetterTabs
             GUI.Label(r, "⊕ Drag a folder or asset here", style);
         }
 
-        static StyleSheet LoadStyleSheet()
+        // Also used by the drag ghost, which is laid over other windows.
+        internal static StyleSheet LoadStyleSheet()
         {
             foreach (string guid in AssetDatabase.FindAssets("BetterTabs t:StyleSheet"))
             {
@@ -685,12 +920,21 @@ namespace BetterTabs
         {
             if (!IsDraggingAsset()) return;
 
+            AddTabsFromDrag();
+            evt.StopPropagation();
+        }
+
+        // Shared by every place a drop creates tabs: the tab bar and the empty panel.
+        void AddTabsFromDrag()
+        {
             DragAndDrop.AcceptDrag();
-            foreach (string path in DragAndDrop.paths)
-                // A file dragged from the OS file browser has no asset path yet, so
-                // there is nothing to pin; it only makes sense dropped on a folder.
-                if (!string.IsNullOrEmpty(path) && path.Replace('\\', '/').StartsWith("Assets/"))
-                    AddOrSelectTab(path);
+
+            if (DragAndDrop.paths != null)
+                foreach (string path in DragAndDrop.paths)
+                    // A file dragged from the OS file browser has no asset path yet, so
+                    // there is nothing to pin; it only makes sense dropped on a folder.
+                    if (!string.IsNullOrEmpty(path) && path.Replace('\\', '/').StartsWith("Assets/"))
+                        AddOrSelectTab(path);
 
             if (DragAndDrop.objectReferences != null)
                 foreach (Object o in DragAndDrop.objectReferences)
@@ -698,8 +942,7 @@ namespace BetterTabs
                         AddOrSelectSceneObjectTab(go);
 
             _isDragHovering = false;
-            _tabBar.SetDropHint(false);
-            evt.StopPropagation();
+            _tabBar?.SetDropHint(false);
         }
 
         // ── Tab bar plumbing ──────────────────────────────────────────────────
@@ -722,14 +965,19 @@ namespace BetterTabs
             _tabBar.SetAddEnabled(CanAddSelection());
 
             if (_toolbar == null) return;
-            // A hierarchy tab swaps the search box for the action that fits it.
-            bool showFocus = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
+            // A hierarchy tab swaps the search box for the action that fits it. Focus in
+            // Scene only exists while the object is actually in an open scene: a prefab
+            // asset has no scene, and a scene object tab can outlive its scene being open.
+            bool isHierarchyTab = _selectedIndex >= 0 && _selectedIndex < _tabs.Count
                 && (_tabs[_selectedIndex].kind == BetterTabKind.SceneObject
                     || _tabs[_selectedIndex].kind == BetterTabKind.Prefab);
+            bool showFocus = isHierarchyTab && IsSceneObjectLoaded(_tabs[_selectedIndex]);
             // The view toggle only applies to folder tabs that are not showing search.
             bool showView = _tabs.Count > 0 && ActiveTabIsFolder() && !_search.IsSearching;
 
-            _toolbar.SetState(!showFocus, showView, _gridView, showFocus, _projectPanelOpen);
+            bool isPrefabTab = isHierarchyTab && _tabs[_selectedIndex].kind == BetterTabKind.Prefab;
+            bool canSave = isPrefabTab && _dirtyPrefabs.Contains(_tabs[_selectedIndex].path);
+            _toolbar.SetState(!isHierarchyTab, showView, _gridView, showFocus, _projectPanelOpen, isPrefabTab, canSave);
             UpdateBreadcrumb();
         }
 
@@ -768,6 +1016,13 @@ namespace BetterTabs
                 paths.Add(running);
             }
             _toolbar.SetBreadcrumb(labels, paths);
+        }
+
+        static bool IsSceneObjectLoaded(BetterTabEntry tab)
+        {
+            if (tab.kind != BetterTabKind.SceneObject) return false;
+            if (!GlobalObjectId.TryParse(tab.globalObjectId, out GlobalObjectId gid)) return false;
+            return GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid) != null;
         }
 
         void OnBreadcrumbClicked(string path)
@@ -923,13 +1178,16 @@ namespace BetterTabs
         // ── Search results ────────────────────────────────────────────────────
         // ── Grid view ─────────────────────────────────────────────────────────
         // ── Project panel ─────────────────────────────────────────────────────
+        // Switching tabs reveals where the tab lives in the left panel. It is shown as the
+        // panel's selection: a second "highlight" mark looked exactly like a selection and
+        // left two rows marked at once.
         void SyncProjectTreeHighlight()
         {
             if (_projectTree == null) return;
-            string path = !string.IsNullOrEmpty(_selectedAssetPath) ? _selectedAssetPath : ActiveTabPath();
+            string path = ActiveTabPath();
             if (string.IsNullOrEmpty(path)) return;
-            _projectTree.SetHighlight(path);
             _projectTree.ExpandToPath(path);
+            _projectTree.SetSelectedPath(path);
             ScrollProjectPanelToPath(path);
         }
 
@@ -976,6 +1234,16 @@ namespace BetterTabs
                     Repaint();
                 }
             }
+            // The empty panel ("Drag a folder or asset here") only ever showed the hover
+            // highlight: the drop itself was never handled, so nothing happened.
+            else if (ev.type == EventType.DragPerform)
+            {
+                if (!windowRect.Contains(ev.mousePosition) || !IsDraggingAsset()) return;
+
+                AddTabsFromDrag();
+                ev.Use();
+                Repaint();
+            }
             else if (ev.type == EventType.DragExited)
             {
                 _isDragHovering = false;
@@ -1010,17 +1278,32 @@ namespace BetterTabs
 
         // ── Asset selection / interaction callbacks ────────────────────────────
 
+        // The whole multi-selection goes to Unity, with the clicked row as the active one;
+        // handing over only the last row collapsed the panel's selection to one item as
+        // soon as Unity's selection was mirrored back.
         void OnProjectPanelItemClicked(string path)
         {
             _selectedAssetPath = path;
-            _projectTree.SetHighlight(path);
-            string capturedPath = path;
-            EditorApplication.delayCall += () =>
-            {
-                Object obj = AssetDatabase.LoadAssetAtPath<Object>(capturedPath);
-                if (obj != null) Selection.activeObject = obj;
-            };
+            List<string> selectedPaths = _projectTree.GetSelectedPaths();
+            string activePath = path;
+            EditorApplication.delayCall += () => SetUnitySelection(selectedPaths, activePath);
             Repaint();
+        }
+
+        static void SetUnitySelection(List<string> paths, string activePath)
+        {
+            List<Object> objects = new List<Object>();
+            Object active = null;
+            foreach (string path in paths)
+            {
+                Object obj = BetterAssetTreeView.LoadObject(path);
+                if (obj == null) continue;
+                objects.Add(obj);
+                if (path == activePath) active = obj;
+            }
+
+            Selection.objects = objects.ToArray();
+            if (active != null) Selection.activeObject = active;
         }
 
         void OnAssetSelected(string path)
@@ -1031,15 +1314,11 @@ namespace BetterTabs
             string capturedPath = path;
             EditorApplication.delayCall += () =>
             {
-                Object obj = AssetDatabase.LoadAssetAtPath<Object>(capturedPath);
+                Object obj = BetterAssetTreeView.LoadObject(capturedPath);
                 if (obj != null) Selection.activeObject = obj;
             };
-            if (_projectPanelOpen)
-            {
-                _projectTree.SetHighlight(path);
-                _projectTree.ExpandToPath(path);
-                ScrollProjectPanelToPath(path);
-            }
+            // The left panel follows through OnUnitySelectionChanged once Unity's selection
+            // lands, like any other selection.
             Repaint();
         }
 
@@ -1047,18 +1326,23 @@ namespace BetterTabs
         {
             if (paths == null || paths.Count == 0) return;
             var objs = new List<Object>();
+            // Only whole files travel as paths: a sub-asset dropped on a folder must not
+            // move the file it lives in, it can only be assigned to fields.
+            List<string> filePaths = new List<string>();
             foreach (var path in paths)
             {
-                var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
-                if (obj != null) objs.Add(obj);
+                var obj = BetterAssetTreeView.LoadObject(path);
+                if (obj == null) continue;
+                objs.Add(obj);
+                if (!BetterAssetTreeView.IsSubAssetKey(path)) filePaths.Add(path);
             }
             if (objs.Count == 0) return;
 
             DragAndDrop.PrepareStartDrag();
             DragAndDrop.objectReferences = objs.ToArray();
-            DragAndDrop.paths = paths.ToArray();
+            DragAndDrop.paths = filePaths.ToArray();
             string label = objs.Count == 1
-                ? Path.GetFileNameWithoutExtension(paths[0])
+                ? objs[0].name
                 : $"{objs.Count} items";
             DragAndDrop.StartDrag(label);
         }
@@ -1095,22 +1379,40 @@ namespace BetterTabs
             }
         }
 
+        void SavePrefabIfDirty(string prefabPath)
+        {
+            if (!_dirtyPrefabs.Contains(prefabPath)) return;
+            if (!_loadedPrefabRoots.TryGetValue(prefabPath, out GameObject root) || root == null) return;
+
+            try
+            {
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                _dirtyPrefabs.Remove(prefabPath);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[BetterTabs] Save prefab failed '{prefabPath}': {e.Message}");
+            }
+        }
+
         void SaveAndUnloadPrefab(string prefabPath)
         {
             if (!_loadedPrefabRoots.TryGetValue(prefabPath, out var root) || root == null)
             {
                 _loadedPrefabRoots.Remove(prefabPath);
+                _dirtyPrefabs.Remove(prefabPath);
                 return;
             }
 
-            // Final flush in case a pending delayCall hasn't run yet.
-            try { PrefabUtility.SaveAsPrefabAsset(root, prefabPath); }
-            catch (System.Exception e) { Debug.LogError($"[BetterTabs] Save prefab failed '{prefabPath}': {e.Message}"); }
+            // Final flush in case a pending delayCall hasn't run yet; untouched prefabs
+            // are not written at all.
+            SavePrefabIfDirty(prefabPath);
 
             try { PrefabUtility.UnloadPrefabContents(root); }
             catch { /* ignore */ }
 
             _loadedPrefabRoots.Remove(prefabPath);
+            _dirtyPrefabs.Remove(prefabPath);
         }
 
         void SaveAndUnloadAllPrefabs()
@@ -1126,6 +1428,7 @@ namespace BetterTabs
                 try { PrefabUtility.UnloadPrefabContents(root); } catch { /* ignore */ }
             }
             _loadedPrefabRoots.Remove(prefabPath);
+            _dirtyPrefabs.Remove(prefabPath);
             _goView?.Invalidate();
         }
 
@@ -1144,6 +1447,14 @@ namespace BetterTabs
         {
             if (args.context is BetterTabsWindow w && w._selectedIndex >= 0)
                 w.RemoveTab(w._selectedIndex);
+        }
+
+        // Scoped to this window, so while BetterTabs has focus Ctrl+S saves the prefab tab
+        // instead of the open scene.
+        [Shortcut("BetterTabs/Save Prefab", typeof(BetterTabsWindow), KeyCode.S, ShortcutModifiers.Action)]
+        static void SavePrefabShortcut(ShortcutArguments args)
+        {
+            if (args.context is BetterTabsWindow w) w.SaveActivePrefab();
         }
 
         [Shortcut("BetterTabs/Reopen Closed Tab", typeof(BetterTabsWindow), KeyCode.T,
@@ -1179,8 +1490,130 @@ namespace BetterTabs
             evt.StopPropagation();
         }
 
+        const string CopyCommand = "Copy";
+        const string CutCommand = "Cut";
+        const string PasteCommand = "Paste";
+        const string DuplicateCommand = "Duplicate";
+
+        void OnRootValidateCommand(ValidateCommandEvent evt)
+        {
+            if (!TryGetCommandContext(evt.target as VisualElement, out List<string> selected, out string rootFolder)) return;
+            if (CanRunCommand(evt.commandName, selected)) evt.StopPropagation();
+        }
+
+        void OnRootExecuteCommand(ExecuteCommandEvent evt)
+        {
+            if (!TryGetCommandContext(evt.target as VisualElement, out List<string> selected, out string rootFolder)) return;
+            if (!CanRunCommand(evt.commandName, selected)) return;
+
+            List<string> created = null;
+            switch (evt.commandName)
+            {
+                case CopyCommand:
+                    BetterAssetClipboard.Copy(selected);
+                    break;
+
+                case CutCommand:
+                    BetterAssetClipboard.Cut(selected);
+                    break;
+
+                case PasteCommand:
+                    created = BetterAssetClipboard.PasteInto(PasteFolderFor(selected, rootFolder));
+                    break;
+
+                case DuplicateCommand:
+                    created = new List<string>();
+                    foreach (string path in selected)
+                        if (!BetterAssetTreeView.IsSubAssetKey(path))
+                            created.Add(BetterTabsInteractionHandler.Duplicate(path));
+                    break;
+
+                default:
+                    return;
+            }
+
+            if (created != null && created.Count > 0)
+            {
+                RequestRefresh();
+                string active = created[created.Count - 1];
+                EditorApplication.delayCall += () => SetUnitySelection(created, active);
+            }
+
+            evt.StopPropagation();
+        }
+
+        static bool CanRunCommand(string command, List<string> selected)
+        {
+            switch (command)
+            {
+                case PasteCommand:
+                    return BetterAssetClipboard.HasItems;
+
+                case CopyCommand:
+                case CutCommand:
+                case DuplicateCommand:
+                    foreach (string path in selected)
+                        if (path != "Assets" && !BetterAssetTreeView.IsSubAssetKey(path)) return true;
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
+        // Which asset panel a command was aimed at, what is selected there and the folder
+        // it shows. Commands anywhere else (a text field, the prefab inspector) are left alone.
+        bool TryGetCommandContext(VisualElement target, out List<string> selected, out string rootFolder)
+        {
+            selected = null;
+            rootFolder = null;
+            if (target == null || target is TextField || target.GetFirstAncestorOfType<TextField>() != null) return false;
+
+            if (_projectTree != null && _projectTree.Contains(target))
+            {
+                selected = _projectTree.GetSelectedPaths();
+                rootFolder = _projectTree.RootPath;
+                return true;
+            }
+
+            if (_contentTree != null && _contentTree.Contains(target))
+            {
+                selected = _contentTree.GetSelectedPaths();
+                rootFolder = _contentTree.RootPath;
+                return true;
+            }
+
+            // Search results span the whole project, so they have no folder to paste into.
+            if (_assetList != null && _assetList.Contains(target) && !string.IsNullOrEmpty(_assetList.DropFolder))
+            {
+                selected = new List<string>();
+                if (!string.IsNullOrEmpty(_assetList.SelectedPath)) selected.Add(_assetList.SelectedPath);
+                rootFolder = _assetList.DropFolder;
+                return true;
+            }
+
+            return false;
+        }
+
+        // Pasting lands in the selected folder, next to a selected file, or in the panel's
+        // own folder when nothing is selected.
+        static string PasteFolderFor(List<string> selected, string rootFolder)
+        {
+            if (selected.Count == 0) return rootFolder;
+
+            string last = BetterAssetTreeView.MainPathOf(selected[selected.Count - 1]);
+            return AssetDatabase.IsValidFolder(last) ? last : Path.GetDirectoryName(last)?.Replace('\\', '/');
+        }
+
         void OnRootKeyDown(KeyDownEvent evt)
         {
+            if (_openPage != Page.None && evt.keyCode == KeyCode.Escape)
+            {
+                ClosePage();
+                evt.StopPropagation();
+                return;
+            }
+
             bool ctrl = evt.ctrlKey || evt.commandKey;
 
             if (evt.shiftKey && !ctrl && _tabs.Count > 1
@@ -1296,6 +1729,13 @@ namespace BetterTabs
 
         void SelectTab(int index)
         {
+            ClosePage();
+
+            // Leaving a prefab tab writes its pending changes.
+            if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count && _selectedIndex != index
+                && _tabs[_selectedIndex].kind == BetterTabKind.Prefab)
+                SavePrefabIfDirty(_tabs[_selectedIndex].path);
+
             PersistActiveTabState();
             _selectedIndex = index;
             _selectedAssetPath = null;
@@ -1360,6 +1800,14 @@ namespace BetterTabs
         void CloseOthers(int keepIndex)
         {
             var keep = _tabs[keepIndex];
+
+            // The closed prefab tabs are saved and released, as closing them one by one would.
+            foreach (BetterTabEntry closed in _tabs)
+            {
+                if (closed != keep && closed.kind == BetterTabKind.Prefab && closed.path != keep.path)
+                    SaveAndUnloadPrefab(closed.path);
+            }
+
             _tabs.Clear();
             _tabs.Add(keep);
             SelectTab(0);
@@ -1390,7 +1838,8 @@ namespace BetterTabs
         {
             if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
             var tab = _tabs[_selectedIndex];
-            _contentTree?.SaveExpandedState(tab.expandedPaths);
+            if (IsContentTreeShowing(tab))
+                _contentTree.SaveExpandedState(tab.expandedPaths);
             tab.searchQuery = _search.CommittedQuery;
         }
 
@@ -1402,7 +1851,9 @@ namespace BetterTabs
             if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
             var tab = _tabs[_selectedIndex];
 
-            _contentTree?.LoadExpandedState(tab.expandedPaths);
+            // The folders this tab had open are applied by the content tree itself when it
+            // switches to the tab's root (UpdateRightPaneMode): applying them here, before
+            // the switch, expanded rows that did not exist yet.
 
             if (!string.IsNullOrEmpty(tab.searchQuery))
             {
@@ -1411,13 +1862,30 @@ namespace BetterTabs
             }
         }
 
+        // Saved on every expand or collapse, so a tab keeps its open folders through a
+        // tab switch, a domain reload or the window being closed.
         void OnFoldoutToggled()
         {
-            if (_selectedIndex >= 0 && _selectedIndex < _tabs.Count)
-            {
-                _contentTree?.SaveExpandedState(_tabs[_selectedIndex].expandedPaths);
-                BetterTabsPrefs.Save(_tabs, _selectedIndex);
-            }
+            if (_selectedIndex < 0 || _selectedIndex >= _tabs.Count) return;
+
+            BetterTabEntry tab = _tabs[_selectedIndex];
+            if (!IsContentTreeShowing(tab)) return;
+
+            _contentTree.SaveExpandedState(tab.expandedPaths);
+            BetterTabsPrefs.Save(_tabs, _selectedIndex);
+        }
+
+        // The content tree keeps showing the last folder while an asset or prefab tab is
+        // active, so its expansion only belongs to a tab whose root it currently shows.
+        bool IsContentTreeShowing(BetterTabEntry tab)
+        {
+            return _contentTree != null && tab.kind == BetterTabKind.Folder && _contentTree.RootPath == tab.path;
+        }
+
+        void SaveProjectPanelExpansion()
+        {
+            if (_projectTree != null)
+                EditorPrefs.SetString(ProjectExpandedKey, _projectTree.SaveExpandedState());
         }
 
         void ClearSearch()

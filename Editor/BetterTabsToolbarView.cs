@@ -20,6 +20,7 @@ namespace BetterTabs
         readonly Button _gridBtn;
         readonly Button _listBtn;
         readonly Button _focusBtn;
+        readonly Button _saveBtn;
         readonly Button _overflowBtn;
 
         // Crumb index -> the path that crumb walks to.
@@ -29,10 +30,9 @@ namespace BetterTabs
         public event Action<bool> ViewModeChanged;      // true = grid
         public event Action<string> CrumbClicked;
         public event Action FocusClicked;
+        public event Action SaveClicked;
         public event Action PanelToggleClicked;
         public event Action UnitySearchClicked;
-        public event Action SettingsClicked;
-        public event Action HelpClicked;
 
         public BetterTabsToolbarView()
         {
@@ -57,6 +57,11 @@ namespace BetterTabs
             _focusBtn.AddToClassList("bt-toolbar__action");
             _focusBtn.tooltip = "Ping in Hierarchy / Project";
             Add(_focusBtn);
+
+            _saveBtn = new Button(() => SaveClicked?.Invoke()) { text = "Save" };
+            _saveBtn.AddToClassList("bt-toolbar__action");
+            _saveBtn.tooltip = "Save the prefab (Ctrl+S). Also saved when you leave or close the tab.";
+            Add(_saveBtn);
 
             _searchField = new TextField();
             _searchField.AddToClassList("bt-search");
@@ -105,10 +110,8 @@ namespace BetterTabs
         void ShowOverflowMenu()
         {
             GenericMenu menu = new GenericMenu();
+            // Settings and How to Use live at the bottom right of the window now.
             menu.AddItem(new GUIContent("Open Unity Search"), false, () => UnitySearchClicked?.Invoke());
-            menu.AddSeparator("");
-            menu.AddItem(new GUIContent("Settings"), false, () => SettingsClicked?.Invoke());
-            menu.AddItem(new GUIContent("How to Use"), false, () => HelpClicked?.Invoke());
             menu.DropDown(_overflowBtn.worldBound);
         }
 
@@ -149,11 +152,13 @@ namespace BetterTabs
         // ── State ─────────────────────────────────────────────────────────────
 
         public void SetState(bool showSearch, bool showView, bool gridView, bool showFocus,
-            bool panelOpen)
+            bool panelOpen, bool showSave, bool canSave)
         {
             _searchField.style.display = showSearch ? DisplayStyle.Flex : DisplayStyle.None;
             _viewToggle.style.display = showView ? DisplayStyle.Flex : DisplayStyle.None;
             _focusBtn.style.display = showFocus ? DisplayStyle.Flex : DisplayStyle.None;
+            _saveBtn.style.display = showSave ? DisplayStyle.Flex : DisplayStyle.None;
+            _saveBtn.SetEnabled(canSave);
 
             _gridBtn.EnableInClassList("bt-seg__btn--active", gridView);
             _listBtn.EnableInClassList("bt-seg__btn--active", !gridView);

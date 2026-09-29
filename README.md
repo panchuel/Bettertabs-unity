@@ -2,7 +2,7 @@
 
 A dockable **Project panel replacement** for Unity that lets you pin folders as tabs and work without constantly navigating the full asset tree.
 
-![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
+![Unity](https://img.shields.io/badge/Unity-6000.3%2B-black?logo=unity)
 ![Version](https://img.shields.io/badge/version-1.0.7-blue)
 ![Editor Only](https://img.shields.io/badge/scope-Editor%20only-orange)
 
@@ -38,7 +38,7 @@ BetterTabs keeps those folders one click away, with the same interactions you al
 | **Tab overflow** | `‹` `›` arrows appear when tabs exceed the bar width, with smooth scroll animation |
 | **Browser shortcuts** | Ctrl+T / Ctrl+W / Ctrl+Shift+T + scroll navigation |
 | **Session persistence** | Tabs, expanded paths, and search query survive editor restarts |
-| **Settings** | Invert scroll direction — **Window › BetterTabs › Settings** |
+| **Settings** | Invert scroll direction, drag preview — the **gear** at the bottom right of the window |
 
 ---
 
@@ -63,7 +63,7 @@ No additional setup is required. The tool is ready to use after import.
 
 ## Quick Start
 
-1. Open the window: **Window › BetterTabs › Open BetterTabs**.
+1. Open the window: **Window › Panchuel › BetterTabs**.
 2. Dock it anywhere — next to the Project panel, the Inspector, or as a floating window.
 3. Drag any folder from the native Project panel into the BetterTabs window.
 4. The folder opens as a tab. Drag more folders to add more tabs.
@@ -175,13 +175,13 @@ Click the **Refresh** button in the toolbar, or right-click anywhere in the pane
 Make sure you are dragging from the **native Unity Project panel** (not from the OS file explorer). Dragging from the OS file manager into the window is not supported.
 
 **The window appears empty after docking.**  
-Resize the window slightly to trigger a repaint, or close and reopen it via **Window › BetterTabs › Open BetterTabs**.
+Resize the window slightly to trigger a repaint, or close and reopen it via **Window › Panchuel › BetterTabs**.
 
 ---
 
 ## Requirements
 
-- Unity **2021.3 or later**
+- Unity **6000.3 (Unity 6.3 LTS) or later**
 - No third-party dependencies
 
 ---

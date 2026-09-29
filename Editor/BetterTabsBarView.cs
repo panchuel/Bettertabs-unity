@@ -40,6 +40,11 @@ namespace BetterTabs
         float _grabOffsetX;
         bool _dragging;
 
+        const string UnsavedMark = " •";
+
+        // Tells whether a tab has changes not written to disk yet.
+        public Func<BetterTabEntry, bool> UnsavedProvider;
+
         public event Action<int> TabSelected;
         public event Action<int> TabClosed;
         public event Action<int> TabContextMenu;
@@ -219,7 +224,10 @@ namespace BetterTabs
                 el.Add(img);
             }
 
-            Label label = new Label(tab.name);
+            // A prefab with changes not written yet carries a dot, like an unsaved file in a
+            // code editor: it is saved on leaving the tab, or with the toolbar's Save.
+            bool isUnsaved = UnsavedProvider != null && UnsavedProvider(tab);
+            Label label = new Label(isUnsaved ? tab.name + UnsavedMark : tab.name);
             label.AddToClassList("bt-tab__label");
             el.Add(label);
 

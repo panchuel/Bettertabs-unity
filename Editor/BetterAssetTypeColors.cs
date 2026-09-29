@@ -18,6 +18,8 @@ namespace BetterTabs
 
         // Shared with the hierarchy rows and the inspector badge.
         public static Color GameObjectTint => GameObject;
+        // For folders outside the asset database (dragged in from the OS).
+        public static Color FolderTint => Folder;
 
         // Folders the project keeps but no longer builds against. Name-based because
         // nothing in the asset database marks them; extend the list per project.

@@ -18,6 +18,7 @@ namespace BetterTabs
         const float PreviewMinH = 60f;
         const float PreviewMaxH = 400f;
         const float DragThreshold = 3f;
+        const long ApplyBarRefreshMs = 250;
 
         readonly VisualElement _badge;
         readonly Image _icon;
@@ -28,6 +29,9 @@ namespace BetterTabs
         readonly Label _previewTitle;
         readonly IMGUIContainer _previewSettings;
         readonly IMGUIContainer _previewBody;
+        readonly VisualElement _applyBar;
+        readonly Button _revertButton;
+        readonly Button _applyButton;
 
         Editor _editor;
         string _path;
@@ -87,6 +91,28 @@ namespace BetterTabs
             _inspectorScroll.style.flexGrow = 1;
             Add(_inspectorScroll);
 
+            // ── Apply / Revert ────────────────────────────────────────────────
+            // An importer editor built outside Unity's Inspector does not draw its own
+            // Apply/Revert, so import settings could be changed but never applied. These
+            // drive it through Editor.SaveChanges/DiscardChanges, public API that an
+            // AssetImporterEditor maps to Apply and Revert.
+            _applyBar = new VisualElement();
+            _applyBar.AddToClassList("bt-inspector__apply-bar");
+
+            _revertButton = new Button(RevertImportSettings) { text = "Revert" };
+            _revertButton.AddToClassList("bt-inspector__open");
+            _applyBar.Add(_revertButton);
+
+            _applyButton = new Button(ApplyImportSettings) { text = "Apply" };
+            _applyButton.AddToClassList("bt-inspector__open");
+            _applyBar.Add(_applyButton);
+
+            Add(_applyBar);
+
+            // Import settings change inside the importer's own UI, which raises nothing
+            // this view can listen to, so the buttons poll whether there is anything to apply.
+            schedule.Execute(RefreshApplyBar).Every(ApplyBarRefreshMs);
+
             // ── Preview block ─────────────────────────────────────────────────
             _previewBlock = new VisualElement();
             _previewBlock.AddToClassList("bt-preview");
@@ -135,10 +161,13 @@ namespace BetterTabs
         public void SetAsset(string path)
         {
             if (path == _path) return;
+
+            ResolveUnappliedChanges();
             _path = path;
 
-            DestroyEditor();
+            // The element goes first so it never draws an editor already destroyed.
             _inspectorScroll.Clear();
+            DestroyEditor();
 
             _editor = CreateInspectorFor(path);
 
@@ -181,6 +210,10 @@ namespace BetterTabs
         // Asking for the importer's editor and looking at what comes back is how the
         // choice gets made without hard-coding a list of extensions that would go stale
         // the moment a project adds a ScriptedImporter of its own.
+        //
+        // Building these through an ActiveEditorTracker locked on the asset was tried and
+        // reverted: locking a tracker on an object is internal API, and in 6000.6 the call
+        // crashed the editor natively on a freshly created tracker.
         static Editor CreateInspectorFor(string path)
         {
             AssetImporter importer = AssetImporter.GetAtPath(path);
@@ -207,6 +240,47 @@ namespace BetterTabs
             if (_editor == null) return;
             UnityEngine.Object.DestroyImmediate(_editor);
             _editor = null;
+        }
+
+        void RefreshApplyBar()
+        {
+            bool isImporter = _editor is AssetImporterEditor;
+            _applyBar.style.display = isImporter ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!isImporter) return;
+
+            bool hasChanges = _editor.hasUnsavedChanges;
+            _applyButton.SetEnabled(hasChanges);
+            _revertButton.SetEnabled(hasChanges);
+        }
+
+        void ApplyImportSettings()
+        {
+            if (_editor == null || !_editor.hasUnsavedChanges) return;
+            _editor.SaveChanges();
+            RefreshApplyBar();
+        }
+
+        void RevertImportSettings()
+        {
+            if (_editor == null || !_editor.hasUnsavedChanges) return;
+            _editor.DiscardChanges();
+            RefreshApplyBar();
+        }
+
+        // Leaving an asset with import settings changed but not applied would silently
+        // drop them, so ask first, as Unity's Inspector does when the selection changes.
+        void ResolveUnappliedChanges()
+        {
+            if (_editor == null || !_editor.hasUnsavedChanges) return;
+
+            bool apply = EditorUtility.DisplayDialog(
+                "Unapplied import settings",
+                $"Unapplied import settings for '{_path}'.",
+                "Apply",
+                "Revert");
+
+            if (apply) _editor.SaveChanges();
+            else _editor.DiscardChanges();
         }
 
         // ── Preview ───────────────────────────────────────────────────────────
